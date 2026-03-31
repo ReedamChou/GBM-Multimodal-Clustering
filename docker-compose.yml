@@ -1,0 +1,56 @@
+# ==============================================================================
+# GBM Multi-Modal Clustering Pipeline — Docker Compose
+# ==============================================================================
+# Usage:
+#   docker compose build                                    # build image
+#   docker compose run --rm gbm-pipeline                    # full pipeline
+#   docker compose run --rm gbm-pipeline \
+#     python -m scripts.run_pipeline --step 1               # specific step
+#   docker compose run --rm gbm-pipeline bash               # interactive shell
+# ==============================================================================
+
+services:
+  gbm-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gbm-pipeline:latest
+    container_name: gbm-pipeline
+
+    # ── GPU Access ──────────────────────────────────────────────────────
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1          # Use 1 GPU (RTX 4050)
+              capabilities: [gpu]
+        limits:
+          memory: 14G           # Cap container memory (leave headroom for OS)
+
+    # ── Volume Mounts ───────────────────────────────────────────────────
+    # Dataset = READ-ONLY (never modify source imaging data)
+    # data/results = READ-WRITE (pipeline outputs go here)
+    volumes:
+      - ./Dataset:/workspace/Dataset:ro
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+      - ./config:/workspace/config:ro
+
+    # ── Environment ─────────────────────────────────────────────────────
+    environment:
+      - PYTHONPATH=/workspace
+      - PYTHONHASHSEED=0
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+      - NUMEXPR_MAX_THREADS=4
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+    # ── Resource Defaults ───────────────────────────────────────────────
+    shm_size: "2g"              # Shared memory for PyTorch DataLoader workers
+    stdin_open: true            # Keep stdin open for interactive sessions
+    tty: true                   # Allocate pseudo-TTY
+
+    # ── Networking ──────────────────────────────────────────────────────
+    # No ports exposed — this is a batch processing pipeline, not a server

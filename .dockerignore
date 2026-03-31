@@ -1,0 +1,52 @@
+# ==============================================================================
+# .dockerignore — Exclude from Docker build context
+# ==============================================================================
+# The Dataset/ folder can be 50-100+ GB of NIfTI MRI files.
+# It MUST be excluded from the build context and mounted at runtime instead.
+# ==============================================================================
+
+# ── Large data (bind-mounted at runtime) ──────────────────────────────────
+Dataset/
+data/
+results/
+
+# ── Python artifacts ──────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment / IDE ────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+*.env
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Version control ──────────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ── Docker (prevent recursive context) ───────────────────────────────────
+Dockerfile
+docker-compose.yml
+.dockerignore
+DOCKER_MIGRATION_GUIDE.md
+
+# ── Docs ─────────────────────────────────────────────────────────────────
+README.md
+ROADMAP.md
+LICENSE
+
+# ── OS artifacts ─────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
+desktop.ini
