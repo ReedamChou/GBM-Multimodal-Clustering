@@ -52,7 +52,9 @@ Thumbs.db
 *.local
 
 # Large project data (keep out of git)
-Dataset/
+Dataset/UCSF
+Dataset/UCSF
+
 Clinical+Atlas Merged Data/
 
 # Generated outputs
