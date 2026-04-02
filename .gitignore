@@ -67,3 +67,5 @@ outputs/
 # Medical imaging files
 *.nii
 *.nii.gz
+venv-gbm
+.codex

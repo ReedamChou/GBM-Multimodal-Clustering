@@ -1,0 +1,163 @@
+Step 7 did not create new clusters on the test set. It took the clusters learned on the train set in Step 5, used their centroids, and assigned each test patient to the nearest train-defined cluster in the same feature space. Then it asked three validation questions:
+
+1. Do the test patients fall into roughly the same cluster proportions as train?
+2. Does the “high-risk” cluster keep a similar biological/imaging signature on test?
+3. Do survival differences across clusters still appear on test?
+
+The key files for reading this are:
+
+- UCSF train summary:
+    
+    ucsf_step6_cluster_summary_train.csv
+    
+- UCSF test summary:
+    
+    ucsf_step7_cluster_summary_test.csv
+    
+- UCSF test validation metadata:
+    
+    ucsf_step7_metadata.json
+    
+- UCSF train/test proportions:
+    
+    ucsf_step7_cluster_proportions_comparison.csv
+    
+- UPenn train summary:
+    
+    upenn_step6_cluster_summary_train.csv
+    
+- UPenn test summary:
+    
+    upenn_step7_cluster_summary_test.csv
+    
+- UPenn test validation metadata:
+    
+    upenn_step7_metadata.json
+    
+- UPenn train/test proportions:
+    
+    upenn_step7_cluster_proportions_comparison.csv
+    
+
+**Very Important First Nuance**
+
+Neither dataset had a significant train-set survival split in Step 6.
+
+- UCSF train log-rank p-value: 0.2074
+- UPenn train log-rank p-value: 0.2126
+
+So the “high-risk” cluster in Step 6 was chosen by the rule-based cluster scoring system, not because train survival had already shown a statistically significant separation. That matters a lot for interpretation.
+
+**UCSF Step By Step**
+
+1. Train clustering found 2 clusters.
+    - Cluster 0: 222 patients, 63.4%
+    - Cluster 1: 128 patients, 36.6%
+    - Cluster 1 was tagged as the high-risk cluster in train.
+2. In train, the two UCSF clusters were not very far apart on median survival.
+    - Cluster 0 median OS: 442
+    - Cluster 1 median OS: 420
+    - That small difference matches why the train log-rank was not significant.
+3. In test, the same 2-cluster structure stayed fairly stable in size.
+    - Cluster 0: 66.9% in test vs 63.4% in train
+    - Cluster 1: 33.1% in test vs 36.6% in train
+    - The high-risk cluster changed by only -3.46 percentage points, which is pretty stable.
+4. In test, survival separation became much stronger than in train.
+    - Cluster 0 median OS: 491
+    - Cluster 1 median OS: 303.5
+    - Test log-rank p-value: 0.0259
+5. That means the UCSF test set supports a real prognostic difference between the assigned clusters.
+    - This is the strongest positive result in the whole pipeline.
+6. But the UCSF phenotype did not replicate perfectly.
+    - Train high-risk cluster dominant lobe: parietal
+    - Test high-risk cluster dominant lobe: frontal
+    - Train high-risk cluster NC/EN: -0.0513
+    - Test high-risk cluster NC/EN: -0.0498
+    - Test high-risk cluster still had the highest NC/EN among the two test clusters, but the lobe identity changed.
+7. Other UCSF train vs test changes in the high-risk cluster:
+    - MGMT methylated dropped from 76.6% to 70.0%
+    - IDH mutant dropped from 6.25% to 0%
+    - Tumor burden index stayed similar: 0.291 to 0.315
+    - Mean age increased slightly: 0.268 to 0.414 in scaled units
+
+**How To Read UCSF**
+
+The cluster structure generalized reasonably well, and the survival difference on test is actually stronger than on train. That is encouraging. But the biological description of the high-risk cluster is not fully stable, especially the dominant lobe. So UCSF gives you a promising validation signal, but not a perfectly clean subtype story.
+
+**UPenn Step By Step**
+
+1. Train clustering found 4 clusters.
+    - Cluster 0: 39.8%
+    - Cluster 1: 25.5%
+    - Cluster 2: 20.6%
+    - Cluster 3: 14.1%
+    - Cluster 2 was tagged as the high-risk cluster in train.
+2. In train, cluster 2 looked biologically plausible as a high-risk phenotype.
+    - Dominant lobe: temporal
+    - Mean NC/EN: 0.2503, the highest among train clusters
+    - Tumor burden index: 0.8246, also high
+    - Median survival: 364
+    - MGMT methylated: 17.0%So train cluster 2 fit the intended imaging story better than UCSF did.
+3. In test, the UPenn cluster proportions were less stable overall.
+    - Cluster 0 grew from 39.8% to 51.6%
+    - Cluster 1 shrank from 25.5% to 16.8%
+    - Cluster 2 shrank from 20.6% to 16.8%
+    - Cluster 3 stayed similar: 14.1% to 14.7%
+4. The specific high-risk cluster size was still reasonably close.
+    - Cluster 2 changed by only -3.76 percentage points
+    - So the high-risk cluster itself did not disappear
+5. The imaging phenotype of the high-risk cluster partly replicated.
+    - Train cluster 2 dominant lobe: temporal
+    - Test cluster 2 dominant lobe: temporal
+    - Train cluster 2 NC/EN: 0.2503
+    - Test cluster 2 NC/EN: 0.0406
+    - Even though NC/EN got much weaker in magnitude, it was still the highest among the 4 test clusters
+6. The survival finding did not replicate.
+    - Train cluster 2 median survival: 364
+    - Test cluster 2 median survival: 435
+    - Test log-rank p-value: 0.3807
+    - In fact, on test, cluster 2 no longer looks like the worst-survival cluster
+7. Other UPenn train vs test changes in the high-risk cluster:
+    - MGMT methylated increased from 17.0% to 19.4%
+    - IDH mutant fell from 2.27% to 0%
+    - Tumor burden index increased from 0.825 to 0.967
+    - Mean age increased from 0.136 to 0.439 in scaled units
+
+**How To Read UPenn**
+
+UPenn gives you partial replication, not full replication.
+
+- The cluster still exists in roughly the same size.
+- It remains temporal dominant.
+- It still has the highest NC/EN among test clusters.
+- But it does not show poor survival on test.
+- And overall test-set survival separation across UPenn clusters is not significant.
+
+So the imaging phenotype is more stable than the prognostic conclusion.
+
+**Train vs Test Differences Summarized**
+
+UCSF:
+
+- Train survival difference: weak and not significant
+- Test survival difference: stronger and significant
+- Cluster sizes: stable
+- High-risk lobe identity: changed from parietal to frontal
+- High-risk NC/EN ranking: stayed relatively high
+
+UPenn:
+
+- Train survival difference: weak and not significant
+- Test survival difference: also not significant
+- Overall cluster sizes: less stable, especially cluster 0
+- High-risk cluster size: still fairly stable
+- High-risk lobe identity: stayed temporal
+- High-risk NC/EN: still highest, but weaker than train
+- High-risk survival pattern: did not hold
+
+**Bottom Line**
+
+After Step 7, the safest interpretation is:
+
+- UCSF provides meaningful internal validation of the cluster structure and its survival relevance, though the exact subtype description is not perfectly stable.
+- UPenn supports the existence of an imaging-defined temporal/high-NC-EN cluster, but not a reliable survival-defined high-risk subtype on the held-out test set.
