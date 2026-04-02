@@ -1,0 +1,187 @@
+Step 7 did not create new clusters on the test set. It took the clusters learned on the train set in Step 5, used their centroids, and assigned each test patient to the nearest train-defined cluster in the same feature space. Then it asked three validation questions:
+
+1. Do the test patients fall into roughly the same cluster proportions as train?
+2. Does the “high-risk” cluster keep a similar biological/imaging signature on test?
+3. Do survival differences across clusters still appear on test?
+
+The key files for reading this are:
+
+- UCSF train summary:
+
+    ucsf_step6_cluster_summary_train.csv
+
+- UCSF test summary:
+
+    ucsf_step7_cluster_summary_test.csv
+
+- UCSF test validation metadata:
+
+    ucsf_step7_metadata.json
+
+- UCSF train/test proportions:
+
+    ucsf_step7_cluster_proportions_comparison.csv
+
+- UPenn train summary:
+
+    upenn_step6_cluster_summary_train.csv
+
+- UPenn test summary:
+
+    upenn_step7_cluster_summary_test.csv
+
+- UPenn test validation metadata:
+
+    upenn_step7_metadata.json
+
+- UPenn train/test proportions:
+
+    upenn_step7_cluster_proportions_comparison.csv
+
+
+**Very Important First Nuance**
+
+These results come from the leakage-safe rerun, where Step 3 no longer learned imputations or scaling on the full cohort. All learned preprocessing was fit on train only in Step 4 and then applied unchanged to test.
+
+This changed the downstream clustering solutions and produced cleaner validation behavior than iteration 1.
+
+
+**UCSF Step By Step**
+
+1. Train clustering found 3 clusters.
+    - Cluster 0: 235 patients, 67.1%
+    - Cluster 1: 60 patients, 17.1%
+    - Cluster 2: 55 patients, 15.7%
+    - Cluster 0 was tagged as the high-risk cluster in train.
+
+2. In train, the UCSF clusters were now clearly separated by survival.
+    - Cluster 0 median OS: 387.5
+    - Cluster 1 median OS: 334.0
+    - Cluster 2 median OS: 805.0
+    - Train log-rank p-value: 1.98e-09
+
+3. In train, the high-risk cluster looked clinically plausible.
+    - Dominant lobe: frontal
+    - MGMT methylated: 75.7%
+    - IDH mutant: 9.36%
+    - Mean NC/EN: 0.0256
+    - Tumor burden index: 0.120
+
+4. In test, the same 3-cluster structure stayed stable in size.
+    - Cluster 0: 64.9% in test vs 67.1% in train
+    - Cluster 1: 14.6% in test vs 17.1% in train
+    - Cluster 2: 20.5% in test vs 15.7% in train
+    - All cluster shifts stayed within 10 percentage points.
+
+5. In test, survival separation remained strongly significant.
+    - Cluster 0 median OS: 372.5
+    - Cluster 1 median OS: 443.0
+    - Cluster 2 median OS: 728.0
+    - Test log-rank p-value: 7.16e-05
+
+6. The UCSF high-risk cluster replicated fairly well in size and phenotype.
+    - Train high-risk cluster: cluster 0
+    - Test high-risk cluster: cluster 0
+    - Train dominant lobe: frontal
+    - Test dominant lobe: frontal
+    - Train MGMT methylated: 75.7%
+    - Test MGMT methylated: 73.5%
+    - Train median OS: 387.5
+    - Test median OS: 372.5
+
+7. The main UCSF phenotype caveat is NC/EN consistency.
+    - Train high-risk cluster mean NC/EN: 0.0256
+    - Test high-risk cluster mean NC/EN: -0.0555
+    - In the Step 7 metadata, the high-risk cluster was only rank 2 for NC/EN among the test clusters.
+    - So the survival replication is strong, but the exact imaging signature is not perfectly preserved.
+
+
+**How To Read UCSF**
+
+UCSF is now a strong internal validation result. The train clustering is survival-relevant, the test assignment preserves the cluster structure well, and the test-set survival difference remains highly significant. The main remaining limitation is that the exact NC/EN-based biological signature is weaker on test than on train.
+
+
+**UPenn Step By Step**
+
+1. Train clustering found 3 clusters.
+    - Cluster 0: 68 patients, 15.9%
+    - Cluster 1: 280 patients, 65.6%
+    - Cluster 2: 79 patients, 18.5%
+    - Cluster 2 was tagged as the high-risk cluster in train.
+
+2. In train, the UPenn clusters did not show a statistically significant survival split.
+    - Cluster 0 median survival: 387.0
+    - Cluster 1 median survival: 432.5
+    - Cluster 2 median survival: 321.0
+    - Train log-rank p-value: 0.2096
+
+3. In train, the UPenn high-risk cluster still fit the intended phenotype reasonably well.
+    - Dominant lobe: temporal
+    - Median survival: 321.0, the lowest among train clusters
+    - MGMT methylated: 10.1%, the lowest among train clusters
+    - Dominant lobe: temporal
+
+4. In test, the 3-cluster structure stayed stable in size.
+    - Cluster 0: 19.6% in test vs 15.9% in train
+    - Cluster 1: 63.6% in test vs 65.6% in train
+    - Cluster 2: 16.8% in test vs 18.5% in train
+    - All cluster shifts stayed within 10 percentage points.
+
+5. In test, survival separation improved but still did not reach significance.
+    - Cluster 0 median survival: 395.5
+    - Cluster 1 median survival: 376.0
+    - Cluster 2 median survival: 341.0
+    - Test log-rank p-value: 0.1009
+
+6. The UPenn high-risk cluster only partially replicated.
+    - Train high-risk cluster: cluster 2
+    - Test high-risk cluster: cluster 2
+    - Train dominant lobe: temporal
+    - Test dominant lobe: parietal
+    - Train MGMT methylated: 10.1%
+    - Test MGMT methylated: 25.8%
+    - Train median survival: 321.0
+    - Test median survival: 341.0
+
+7. The UPenn high-risk cluster also did not preserve its expected temporal/high-NC-EN signature.
+    - Train dominant lobe was temporal, but test dominant lobe became parietal.
+    - The Step 7 metadata marks temporal replication as false.
+    - The high-risk cluster was only rank 2 for NC/EN among test clusters.
+
+
+**How To Read UPenn**
+
+UPenn is better behaved than iteration 1 in terms of cluster-size stability, but it still does not give a strong prognostic validation result. The test-set survival p-value moved closer to significance than before, but remains above 0.05. The high-risk cluster stays present, but its lobe identity and broader phenotype do not replicate cleanly.
+
+
+**Train vs Test Differences Summarized**
+
+UCSF:
+
+- Train survival difference: strong and highly significant
+- Test survival difference: also strong and highly significant
+- Cluster sizes: stable
+- High-risk cluster label: stable as cluster 0
+- High-risk dominant lobe: stable as frontal
+- High-risk median OS: similar between train and test
+- High-risk NC/EN signature: weaker on test than on train
+
+UPenn:
+
+- Train survival difference: not significant
+- Test survival difference: improved but still not significant
+- Cluster sizes: stable
+- High-risk cluster label: stable as cluster 2
+- High-risk dominant lobe: changed from temporal to parietal
+- High-risk MGMT profile: became less clearly high-risk on test
+- High-risk NC/EN signature: not clearly preserved
+
+
+**Bottom Line**
+
+After the leakage-safe iteration 2 rerun:
+
+- UCSF now provides strong internal validation of both the clustering structure and the survival signal.
+- UPenn remains weaker: the cluster structure is reasonably stable, but the prognostic and phenotypic replication are still not strong enough to support a robust external-style validation claim.
+
+Compared with iteration 1, iteration 2 is methodologically much stronger because the preprocessing leakage has been removed. These are the results that should be treated as the valid baseline going forward.

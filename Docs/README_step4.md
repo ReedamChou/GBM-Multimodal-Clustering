@@ -11,12 +11,17 @@ For each dataset (UCSF and UPenn), it does the following:
 1. Loads Step 3 master table and metadata.
 2. Builds a 70/30 train/test split.
 3. Uses stratification to keep train and test similar for:
-- MGMT proportion (using mgmt_bin)
+- MGMT proportion (derived from the raw MGMT column)
 - OS distribution (quantile bins)
 4. Falls back safely to simpler stratification (or random split) if strict stratification is not feasible.
-5. Fits StandardScaler on train only for continuous clustering features.
-6. Transforms both train and test using that train-fitted scaler.
-7. Saves train/test master tables, train/test clustering feature tables, scaler, metadata, and log file.
+5. Fits all learned preprocessing on train only:
+- median imputation for continuous clustering features
+- train-derived fills for categorical and discrete numeric fields
+- binary encoding for sex, MGMT, and IDH
+- dominant lobe cleaning and one-hot encoding
+- StandardScaler for continuous clustering features
+6. Applies the exact same train-fitted preprocessing rules to test.
+7. Saves train/test master tables, train/test clustering feature tables, preprocessor, metadata, and log file.
 
 This enforces the Step 4 anti-leakage rule: no fitting on test data.
 
@@ -33,7 +38,7 @@ The logger records:
 1. Input files used.
 2. Selected stratification strategy and OS bin count.
 3. Row counts and feature counts.
-4. Train-only scaling step.
+4. Train-only preprocessing and scaling step.
 5. Quick train vs test checks for MGMT mean and OS median.
 6. Output file locations.
 
@@ -112,9 +117,10 @@ Folders:
 
 ## Notes
 
-1. Step 3 may already contain standardized columns; Step 4 still re-fits scaling on train only to follow leakage-safe protocol.
-2. Clustering should be run on train clustering features from Step 4, not Step 3 full data.
-3. Keep test set untouched until validation steps.
+1. Step 4 is now the only place where imputers, encoders, and scaler are fit.
+2. All learned preprocessing is derived from train only and then applied unchanged to test.
+3. Clustering should be run on train clustering features from Step 4, not on any full-cohort Step 3 export.
+4. Keep test set untouched until validation steps.
 
 
 ## Troubleshooting

@@ -12,6 +12,14 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
+from pipeline_preprocessing import (
+    canonicalize_lobe,
+    map_idh_to_binary,
+    map_mgmt_to_binary,
+    map_sex_to_binary,
+    safe_mode,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STEP3_DIR = PROJECT_ROOT / "outputs" / "step3"
@@ -56,33 +64,9 @@ def find_first_existing(paths: list[Path]) -> Path:
 
 def build_paths(step3_dir: Path, dataset: str) -> tuple[Path, Path]:
     dataset_dir = step3_dir / dataset
-    master_candidates = [
-        dataset_dir / f"{dataset}_master_table_step3.csv",
-    ]
-    metadata_candidates = [
-        dataset_dir / f"{dataset}_step3_metadata.json",
-    ]
+    master_candidates = [dataset_dir / f"{dataset}_master_table_step3.csv"]
+    metadata_candidates = [dataset_dir / f"{dataset}_step3_metadata.json"]
     return find_first_existing(master_candidates), find_first_existing(metadata_candidates)
-
-
-def detect_already_scaled(df: pd.DataFrame, continuous_cols: list[str]) -> bool:
-    if not continuous_cols:
-        return False
-
-    checks = []
-    for col in continuous_cols:
-        if col not in df.columns:
-            continue
-        s = pd.to_numeric(df[col], errors="coerce").dropna()
-        if len(s) < 10:
-            continue
-        mean_close = abs(float(s.mean())) < 0.2
-        std_close = 0.8 < float(s.std(ddof=0)) < 1.2
-        checks.append(mean_close and std_close)
-
-    if not checks:
-        return False
-    return (sum(checks) / len(checks)) >= 0.8
 
 
 def build_os_bins(os_series: pd.Series, bins: int) -> pd.Series:
@@ -91,7 +75,6 @@ def build_os_bins(os_series: pd.Series, bins: int) -> pd.Series:
     if valid < 10:
         return pd.Series(["os_missing"] * len(os_series), index=os_series.index, dtype="string")
 
-    # Create quantile bins only from non-missing values, then map back to full index.
     tmp = pd.Series(pd.NA, index=os_series.index, dtype="string")
     try:
         binned = pd.qcut(os_numeric.dropna(), q=bins, duplicates="drop")
@@ -190,6 +173,209 @@ def split_with_best_stratification(
     return train_df, test_df, {"strategy": "random", "os_bins": None, "n_classes": None}
 
 
+def encode_binary_with_train_rules(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    source_col: str,
+    output_col: str,
+    mapper,
+    unknown_threshold: float = 0.10,
+) -> tuple[str, str | None, dict]:
+    train_mapped = mapper(train_df[source_col])
+    test_mapped = mapper(test_df[source_col])
+
+    missing_rate = float(train_mapped.isna().mean())
+    unknown_col = None
+    if missing_rate > unknown_threshold:
+        unknown_col = f"{output_col}_unknown"
+        train_df[unknown_col] = train_mapped.isna().astype(int)
+        test_df[unknown_col] = test_mapped.isna().astype(int)
+
+    fill_value = int(safe_mode(train_mapped, default=0))
+    train_df[output_col] = train_mapped.fillna(fill_value).astype(int)
+    test_df[output_col] = test_mapped.fillna(fill_value).astype(int)
+
+    return output_col, unknown_col, {
+        "source_column": source_col,
+        "fill_value": fill_value,
+        "train_missing_rate": missing_rate,
+        "unknown_indicator_added": unknown_col is not None,
+    }
+
+
+def encode_lobe_with_train_rules(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    source_col: str,
+    unknown_threshold: float = 0.10,
+) -> tuple[list[str], dict]:
+    train_lobe = canonicalize_lobe(train_df[source_col])
+    test_lobe = canonicalize_lobe(test_df[source_col])
+
+    missing_rate = float(train_lobe.isna().mean())
+    fill_value = "unknown" if missing_rate > unknown_threshold else str(safe_mode(train_lobe, default="unknown"))
+
+    train_lobe = train_lobe.fillna(fill_value)
+    test_lobe = test_lobe.fillna(fill_value)
+
+    train_df["dominant_lobe_clean"] = train_lobe
+    test_df["dominant_lobe_clean"] = test_lobe
+
+    created_columns = []
+    for lobe_name in ["frontal", "temporal", "parietal", "occipital"]:
+        col_name = f"dominant_lobe_{lobe_name}"
+        train_df[col_name] = (train_lobe == lobe_name).astype(int)
+        test_df[col_name] = (test_lobe == lobe_name).astype(int)
+        created_columns.append(col_name)
+
+    if fill_value == "unknown":
+        train_df["dominant_lobe_unknown"] = (train_lobe == "unknown").astype(int)
+        test_df["dominant_lobe_unknown"] = (test_lobe == "unknown").astype(int)
+        created_columns.append("dominant_lobe_unknown")
+
+    return created_columns, {
+        "source_column": source_col,
+        "fill_value": fill_value,
+        "train_missing_rate": missing_rate,
+    }
+
+
+def fill_string_columns_with_train_rules(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    id_col: str,
+    outcome_cols: set[str],
+) -> dict[str, dict]:
+    fill_metadata: dict[str, dict] = {}
+    for col in train_df.columns:
+        if col == id_col or col in outcome_cols:
+            continue
+        if pd.api.types.is_object_dtype(train_df[col]) or pd.api.types.is_string_dtype(train_df[col]):
+            train_missing_rate = float(train_df[col].isna().mean())
+            test_missing_rate = float(test_df[col].isna().mean())
+            if train_missing_rate == 0 and test_missing_rate == 0:
+                continue
+            fill_value = "unknown" if train_missing_rate > 0.10 else str(safe_mode(train_df[col], default="unknown"))
+            train_df[col] = train_df[col].fillna(fill_value)
+            test_df[col] = test_df[col].fillna(fill_value)
+            fill_metadata[col] = {
+                "fill_value": fill_value,
+                "train_missing_rate": train_missing_rate,
+                "test_missing_rate_before_fill": test_missing_rate,
+            }
+    return fill_metadata
+
+
+def preprocess_split_with_train_only_rules(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    meta: dict,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    train_df = train_df.copy()
+    test_df = test_df.copy()
+
+    resolved = meta.get("resolved_columns", {})
+    id_col = resolved.get("id") or "ID"
+    outcome_cols = {
+        c
+        for c in [resolved.get("os"), resolved.get("censor"), resolved.get("survival_status")]
+        if c is not None
+    }
+
+    binary_columns: list[str] = []
+    binary_encoding_meta: dict[str, dict] = {}
+    for key, mapper, out_col in [
+        ("sex", map_sex_to_binary, "sex_bin"),
+        ("mgmt", map_mgmt_to_binary, "mgmt_bin"),
+        ("idh", map_idh_to_binary, "idh_bin"),
+    ]:
+        src = resolved.get(key)
+        if src is None or src not in train_df.columns or src not in test_df.columns:
+            continue
+        encoded_col, unknown_col, enc_meta = encode_binary_with_train_rules(
+            train_df=train_df,
+            test_df=test_df,
+            source_col=src,
+            output_col=out_col,
+            mapper=mapper,
+        )
+        binary_columns.append(encoded_col)
+        if unknown_col is not None:
+            binary_columns.append(unknown_col)
+        binary_encoding_meta[out_col] = enc_meta
+
+    dominant_lobe_meta = None
+    dominant_lobe_col = resolved.get("dominant_lobe")
+    if dominant_lobe_col is not None and dominant_lobe_col in train_df.columns and dominant_lobe_col in test_df.columns:
+        created_cols, dominant_lobe_meta = encode_lobe_with_train_rules(train_df, test_df, dominant_lobe_col)
+        binary_columns.extend(created_cols)
+
+    categorical_fill_meta = fill_string_columns_with_train_rules(train_df, test_df, id_col, outcome_cols)
+
+    numeric_feature_cols = [
+        c
+        for c in train_df.select_dtypes(include=[np.number]).columns
+        if c != id_col and c not in outcome_cols
+    ]
+    continuous_cols = [
+        c
+        for c in numeric_feature_cols
+        if c not in binary_columns and train_df[c].nunique(dropna=True) > 2
+    ]
+    discrete_numeric_cols = [c for c in numeric_feature_cols if c not in continuous_cols]
+
+    continuous_fill_values: dict[str, float] = {}
+    for col in continuous_cols:
+        train_numeric = pd.to_numeric(train_df[col], errors="coerce")
+        test_numeric = pd.to_numeric(test_df[col], errors="coerce")
+        fill_value = float(train_numeric.median(skipna=True))
+        if np.isnan(fill_value):
+            fill_value = 0.0
+        train_df[col] = train_numeric.fillna(fill_value)
+        test_df[col] = test_numeric.fillna(fill_value)
+        continuous_fill_values[col] = fill_value
+
+    discrete_fill_values: dict[str, float | int] = {}
+    for col in discrete_numeric_cols:
+        train_numeric = pd.to_numeric(train_df[col], errors="coerce")
+        test_numeric = pd.to_numeric(test_df[col], errors="coerce")
+        fill_value = safe_mode(train_numeric, default=0)
+        if pd.isna(fill_value):
+            fill_value = 0
+        train_df[col] = train_numeric.fillna(fill_value)
+        test_df[col] = test_numeric.fillna(fill_value)
+        discrete_fill_values[col] = int(fill_value) if float(fill_value).is_integer() else float(fill_value)
+
+    scaler = StandardScaler()
+    if continuous_cols:
+        train_df = train_df.astype({col: "float64" for col in continuous_cols}, copy=False)
+        test_df = test_df.astype({col: "float64" for col in continuous_cols}, copy=False)
+        train_df.loc[:, continuous_cols] = scaler.fit_transform(train_df[continuous_cols])
+        test_df.loc[:, continuous_cols] = scaler.transform(test_df[continuous_cols])
+
+    feature_cols = [
+        c
+        for c in train_df.columns
+        if c != id_col and c not in outcome_cols and pd.api.types.is_numeric_dtype(train_df[c])
+    ]
+
+    preprocessing_meta = {
+        "id_column": id_col,
+        "outcome_columns": sorted(outcome_cols),
+        "binary_columns": sorted(binary_columns),
+        "continuous_columns": sorted(continuous_cols),
+        "discrete_numeric_columns": sorted(discrete_numeric_cols),
+        "feature_columns": feature_cols,
+        "binary_encoding": binary_encoding_meta,
+        "dominant_lobe_encoding": dominant_lobe_meta,
+        "categorical_fill": categorical_fill_meta,
+        "continuous_median_imputation": continuous_fill_values,
+        "discrete_numeric_fill": discrete_fill_values,
+        "scaler": scaler,
+    }
+    return train_df, test_df, preprocessing_meta
+
+
 def process_dataset(
     dataset: str,
     step3_dir: Path,
@@ -212,50 +398,38 @@ def process_dataset(
     resolved = meta.get("resolved_columns", {})
     id_col = resolved.get("id") or "ID"
     os_col = resolved.get("os")
-    mgmt_col = "mgmt_bin" if "mgmt_bin" in df.columns else None
+    mgmt_source_col = resolved.get("mgmt")
+    mgmt_strata_col = None
 
     if id_col not in df.columns:
         raise ValueError(f"{dataset}: ID column not found in master table: {id_col}")
 
-    feature_cols = [
-        c
-        for c in meta.get("clustering_feature_columns", [])
-        if c in df.columns and pd.api.types.is_numeric_dtype(df[c])
-    ]
-    continuous_cols = [
-        c
-        for c in meta.get("continuous_columns", [])
-        if c in feature_cols and pd.api.types.is_numeric_dtype(df[c])
-    ]
+    if mgmt_source_col is not None and mgmt_source_col in df.columns:
+        mgmt_strata_col = "__mgmt_strata_bin__"
+        df[mgmt_strata_col] = map_mgmt_to_binary(df[mgmt_source_col])
 
-    if not feature_cols:
-        raise ValueError(f"{dataset}: no usable numeric clustering feature columns found.")
-
-    logger.info("Rows=%s | feature_cols=%s | continuous_cols=%s", len(df), len(feature_cols), len(continuous_cols))
-
-    if detect_already_scaled(df, continuous_cols):
-        logger.warning(
-            "Many continuous columns already look standardized. "
-            "Step 4 will still re-fit a train-only scaler to enforce leakage-safe train/test transformation."
-        )
+    logger.info("Rows=%s | columns=%s", len(df), len(df.columns))
 
     train_df, test_df, strat_info = split_with_best_stratification(
         df=df,
         id_col=id_col,
-        mgmt_col=mgmt_col,
+        mgmt_col=mgmt_strata_col,
         os_col=os_col,
         test_size=test_size,
         random_state=random_state,
         logger=logger,
     )
 
-    scaler = StandardScaler()
-    if continuous_cols:
-        train_df = train_df.copy()
-        test_df = test_df.copy()
-        train_df.loc[:, continuous_cols] = scaler.fit_transform(train_df[continuous_cols])
-        test_df.loc[:, continuous_cols] = scaler.transform(test_df[continuous_cols])
-        logger.info("Applied train-only scaling to %s continuous columns.", len(continuous_cols))
+    if mgmt_strata_col is not None:
+        train_df = train_df.drop(columns=[mgmt_strata_col], errors="ignore")
+        test_df = test_df.drop(columns=[mgmt_strata_col], errors="ignore")
+
+    train_df, test_df, preprocessing_meta = preprocess_split_with_train_only_rules(train_df, test_df, meta)
+
+    feature_cols = preprocessing_meta["feature_columns"]
+    continuous_cols = preprocessing_meta["continuous_columns"]
+    scaler = preprocessing_meta["scaler"]
+    logger.info("Prepared leakage-safe features=%s | continuous_cols=%s", len(feature_cols), len(continuous_cols))
 
     train_features = train_df[[id_col] + feature_cols].copy()
     test_features = test_df[[id_col] + feature_cols].copy()
@@ -275,9 +449,17 @@ def process_dataset(
 
     joblib.dump(
         {
+            "preprocessing_version": "train_only_step4_v2",
             "scaler": scaler,
             "continuous_columns": continuous_cols,
             "feature_columns": feature_cols,
+            "binary_columns": preprocessing_meta["binary_columns"],
+            "discrete_numeric_columns": preprocessing_meta["discrete_numeric_columns"],
+            "binary_encoding": preprocessing_meta["binary_encoding"],
+            "dominant_lobe_encoding": preprocessing_meta["dominant_lobe_encoding"],
+            "categorical_fill": preprocessing_meta["categorical_fill"],
+            "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
+            "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
             "id_column": id_col,
             "dataset": dataset,
             "random_state": random_state,
@@ -292,7 +474,7 @@ def process_dataset(
         "source_step3_metadata": str(metadata_path),
         "id_column": id_col,
         "os_column": os_col,
-        "mgmt_column_for_stratification": mgmt_col,
+        "mgmt_column_for_stratification": mgmt_source_col,
         "split": {
             "train_rows": int(train_df.shape[0]),
             "test_rows": int(test_df.shape[0]),
@@ -302,6 +484,16 @@ def process_dataset(
         },
         "feature_columns": feature_cols,
         "continuous_columns": continuous_cols,
+        "binary_columns": preprocessing_meta["binary_columns"],
+        "discrete_numeric_columns": preprocessing_meta["discrete_numeric_columns"],
+        "preprocessing": {
+            "fit_scope": "train_only",
+            "binary_encoding": preprocessing_meta["binary_encoding"],
+            "dominant_lobe_encoding": preprocessing_meta["dominant_lobe_encoding"],
+            "categorical_fill": preprocessing_meta["categorical_fill"],
+            "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
+            "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
+        },
         "outputs": {
             "train_master": str(train_master_out),
             "test_master": str(test_master_out),
@@ -313,9 +505,9 @@ def process_dataset(
     }
     split_meta_out.write_text(json.dumps(split_meta, indent=2), encoding="utf-8")
 
-    if mgmt_col and mgmt_col in train_df.columns and mgmt_col in test_df.columns:
-        train_mgmt_rate = float(pd.to_numeric(train_df[mgmt_col], errors="coerce").mean())
-        test_mgmt_rate = float(pd.to_numeric(test_df[mgmt_col], errors="coerce").mean())
+    if "mgmt_bin" in train_df.columns and "mgmt_bin" in test_df.columns:
+        train_mgmt_rate = float(pd.to_numeric(train_df["mgmt_bin"], errors="coerce").mean())
+        test_mgmt_rate = float(pd.to_numeric(test_df["mgmt_bin"], errors="coerce").mean())
         logger.info("MGMT bin mean train=%.4f | test=%.4f", train_mgmt_rate, test_mgmt_rate)
 
     if os_col and os_col in train_df.columns and os_col in test_df.columns:
@@ -335,7 +527,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Step 4: split Step 3 master table into train/test with stratification and "
-            "fit train-only scaler for continuous clustering features."
+            "fit train-only imputers, encoders, and scaler before exporting clustering features."
         )
     )
     parser.add_argument(
