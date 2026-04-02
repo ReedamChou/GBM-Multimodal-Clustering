@@ -8,37 +8,26 @@ The script implements Step 3 of your GBM pipeline for already merged atlas plus 
 
 For each dataset input (UCSF and or UPenn), it performs:
 
-1. Missing value handling
+1. Raw cleaning only
 - Converts common text placeholders to missing values: unknown, indeterminate, not available, NA, etc.
-- Continuous features: median imputation.
-- Categorical features: mode imputation, or unknown when missingness is above 10%.
+- Converts numeric-looking text columns to numeric dtype when parsing is reliable.
+- Resolves key column aliases for patient ID, dominant lobe, MGMT, IDH, and survival fields.
 
-2. Categorical encoding
-- Dominant lobe to one-hot columns:
-  - dominant_lobe_frontal
-  - dominant_lobe_temporal
-  - dominant_lobe_parietal
-  - dominant_lobe_occipital
-- Binary encoding for:
-  - Sex or Gender to sex_bin
-  - MGMT to mgmt_bin
-  - IDH or IDH1 to idh_bin
-- If missingness is above 10% for a binary field, an extra unknown indicator is added.
+2. Leakage prevention by design
+- Does not fit imputers on the full cohort.
+- Does not encode categorical clustering features on the full cohort.
+- Does not standardize continuous features on the full cohort.
+- Leaves those train-derived transformations for Step 4.
 
-3. Standardization
-- Applies z-score normalization to continuous numeric columns using StandardScaler.
-
-4. Outcome leakage prevention
+3. Outcome leakage prevention
 - Excludes outcome columns from clustering feature export:
   - OS or Survival_from_surgery_days_UPDATED
   - 1-dead 0-alive or Survival_Censor
   - Survival_Status (if present)
 
-5. Saved artifacts per dataset
-- Master table CSV after preprocessing.
-- Clustering feature CSV (numeric predictors only, no outcomes).
-- Scaler object with the list of continuous columns.
-- Metadata JSON describing resolved columns, imputations, and feature set.
+4. Saved artifacts per dataset
+- Raw-cleaned master table CSV.
+- Metadata JSON describing resolved columns and raw predictor columns.
 
 
 ## Expected input
@@ -74,7 +63,7 @@ python -m venv .venv
 
 3. Install dependencies:
 
-pip install pandas numpy scikit-learn joblib
+pip install pandas numpy
 
 
 ## Quick start for your current project
@@ -117,29 +106,26 @@ Inside outputs/step3, the script creates one folder per dataset:
 
 - ucsf/
   - ucsf_master_table_step3.csv
-  - ucsf_clustering_features_step3.csv
-  - ucsf_step3_scaler.joblib
   - ucsf_step3_metadata.json
 
 - upenn/
   - upenn_master_table_step3.csv
-  - upenn_clustering_features_step3.csv
-  - upenn_step3_scaler.joblib
   - upenn_step3_metadata.json
 
 
 ## Notes
 
-- This script standardizes continuous columns on the full provided dataset per run.
-- In your next pipeline step (train and test split), fit a new scaler on train only and transform test using that train-fitted scaler.
-- Keep the current Step 3 outputs as your cleaned and encoded master tables.
+- Step 3 is now a leakage-safe raw-cleaning step only.
+- Train-only imputation, categorical encoding, and scaling are all performed in Step 4.
+- Keep the current Step 3 outputs as the master tables that Step 4 will split before any learned preprocessing is fit.
+- Step 3 is self-contained and does not require a separate shared preprocessing helper module.
 
 
 ## Troubleshooting
 
 - If you get import errors for pandas or sklearn, reinstall dependencies:
 
-pip install --upgrade pandas numpy scikit-learn joblib
+pip install --upgrade pandas numpy
 
 - If the script says no input files found, confirm these exact file names exist inside Clinical+Atlas Merged Data:
   - UCSF_sri24_atlas_features_merged.csv

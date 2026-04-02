@@ -3,18 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Callable
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MERGED_DIR = PROJECT_ROOT / "Clinical+Atlas Merged Data"
-DEFAULT_UCSF_MERGED = DEFAULT_MERGED_DIR / "UCSF_sri24_atlas_features_merged.csv"
-DEFAULT_UPENN_MERGED = DEFAULT_MERGED_DIR / "UPenn_sri24_atlas_features_merged.csv"
 
 
 MISSING_MARKERS = {
@@ -38,6 +29,7 @@ COLUMN_ALIASES = {
         "Dominant_Lobe",
         "Dominant lobe",
         "dominant brain lobe",
+        "dominant_brain_lobe",
     ],
     "sex": ["Sex", "Gender", "sex", "gender"],
     "mgmt": ["MGMT status", "MGMT", "mgmt_status", "mgmt"],
@@ -48,6 +40,12 @@ COLUMN_ALIASES = {
 }
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MERGED_DIR = PROJECT_ROOT / "Clinical+Atlas Merged Data"
+DEFAULT_UCSF_MERGED = DEFAULT_MERGED_DIR / "UCSF_sri24_atlas_features_merged.csv"
+DEFAULT_UPENN_MERGED = DEFAULT_MERGED_DIR / "UPenn_sri24_atlas_features_merged.csv"
+
+
 def first_present_column(columns: pd.Index, aliases: list[str]) -> str | None:
     lookup = {str(c).lower(): c for c in columns}
     for alias in aliases:
@@ -55,17 +53,6 @@ def first_present_column(columns: pd.Index, aliases: list[str]) -> str | None:
         if key in lookup:
             return str(lookup[key])
     return None
-
-
-def normalize_string_series(series: pd.Series) -> pd.Series:
-    return series.astype("string").str.strip().str.lower()
-
-
-def safe_mode(series: pd.Series, default: str | int = "unknown") -> str | int:
-    mode_values = series.mode(dropna=True)
-    if mode_values.empty:
-        return default
-    return mode_values.iloc[0]
 
 
 def replace_missing_markers(df: pd.DataFrame) -> pd.DataFrame:
@@ -92,60 +79,6 @@ def maybe_convert_to_numeric(df: pd.DataFrame, minimum_parse_rate: float = 0.8) 
     return out
 
 
-def map_sex_to_binary(series: pd.Series) -> pd.Series:
-    s = normalize_string_series(series)
-    out = pd.Series(np.nan, index=series.index, dtype="float")
-    out[s.isin(["m", "male"])] = 1
-    out[s.isin(["f", "female"])] = 0
-    return out
-
-
-def map_mgmt_to_binary(series: pd.Series) -> pd.Series:
-    s = normalize_string_series(series)
-    out = pd.Series(np.nan, index=series.index, dtype="float")
-    out[s.str.contains("positive", na=False) | s.str.contains("methylated", na=False)] = 1
-    out[s.str.contains("negative", na=False) | s.str.contains("unmethylated", na=False)] = 0
-    return out
-
-
-def map_idh_to_binary(series: pd.Series) -> pd.Series:
-    s = normalize_string_series(series)
-    out = pd.Series(np.nan, index=series.index, dtype="float")
-    out[s.str.contains("wild", na=False)] = 0
-    out[s.str.contains("mutat", na=False) | s.str.contains("idh1 p\\.", na=False) | s.str.contains("idh2 p\\.", na=False)] = 1
-    return out
-
-
-def canonicalize_lobe(series: pd.Series) -> pd.Series:
-    s = normalize_string_series(series)
-    out = pd.Series(pd.NA, index=series.index, dtype="string")
-    out[s.str.contains("frontal", na=False)] = "frontal"
-    out[s.str.contains("temporal", na=False)] = "temporal"
-    out[s.str.contains("parietal", na=False)] = "parietal"
-    out[s.str.contains("occipital", na=False)] = "occipital"
-    return out
-
-
-def encode_binary_with_unknown_rule(
-    df: pd.DataFrame,
-    source_col: str,
-    output_col: str,
-    mapper: Callable[[pd.Series], pd.Series],
-    unknown_threshold: float = 0.10,
-) -> tuple[str, str | None, float, int]:
-    mapped = mapper(df[source_col])
-    missing_rate = float(mapped.isna().mean())
-
-    unknown_col = None
-    if missing_rate > unknown_threshold:
-        unknown_col = f"{output_col}_unknown"
-        df[unknown_col] = mapped.isna().astype(int)
-
-    fill_value = int(safe_mode(mapped, default=0))
-    df[output_col] = mapped.fillna(fill_value).astype(int)
-    return output_col, unknown_col, missing_rate, fill_value
-
-
 def process_step3(dataset_name: str, input_csv: Path, output_dir: Path) -> None:
     df_raw = pd.read_csv(input_csv)
     df = replace_missing_markers(df_raw)
@@ -166,96 +99,32 @@ def process_step3(dataset_name: str, input_csv: Path, output_dir: Path) -> None:
         if c is not None
     }
 
-    categorical_fill_values: dict[str, str] = {}
-    numeric_fill_values: dict[str, float] = {}
-    binary_columns: list[str] = []
-
-    for key, mapper, out_col in [
-        ("sex", map_sex_to_binary, "sex_bin"),
-        ("mgmt", map_mgmt_to_binary, "mgmt_bin"),
-        ("idh", map_idh_to_binary, "idh_bin"),
-    ]:
-        src = resolved[key]
-        if src is None:
-            continue
-        encoded_col, unknown_col, _, _ = encode_binary_with_unknown_rule(df, src, out_col, mapper)
-        binary_columns.append(encoded_col)
-        if unknown_col is not None:
-            binary_columns.append(unknown_col)
-
-    dominant_lobe_col = resolved["dominant_lobe"]
-    if dominant_lobe_col is not None:
-        lobe = canonicalize_lobe(df[dominant_lobe_col])
-        lobe_missing_rate = float(lobe.isna().mean())
-        if lobe_missing_rate > 0.10:
-            fill_value = "unknown"
-        else:
-            fill_value = str(safe_mode(lobe, default="unknown"))
-        lobe = lobe.fillna(fill_value)
-        df["dominant_lobe_clean"] = lobe
-        categorical_fill_values["dominant_lobe_clean"] = fill_value
-
-        for lobe_name in ["frontal", "temporal", "parietal", "occipital"]:
-            col_name = f"dominant_lobe_{lobe_name}"
-            df[col_name] = (lobe == lobe_name).astype(int)
-            binary_columns.append(col_name)
-
-        if fill_value == "unknown":
-            df["dominant_lobe_unknown"] = (lobe == "unknown").astype(int)
-            binary_columns.append("dominant_lobe_unknown")
-
-    for col in df.columns:
-        if col == id_col or col in outcome_cols:
-            continue
-        if pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col]):
-            missing_rate = float(df[col].isna().mean())
-            if missing_rate == 0:
-                continue
-            if missing_rate > 0.10:
-                fill_value = "unknown"
-            else:
-                fill_value = str(safe_mode(df[col], default="unknown"))
-            df[col] = df[col].fillna(fill_value)
-            categorical_fill_values[col] = fill_value
-
-    numeric_cols = [
+    raw_numeric_predictor_columns = [
         c
         for c in df.select_dtypes(include=[np.number]).columns
         if c != id_col and c not in outcome_cols
     ]
-
-    continuous_cols = [
-        c
-        for c in numeric_cols
-        if c not in binary_columns and df[c].nunique(dropna=True) > 2
-    ]
-
-    for col in continuous_cols:
-        median_val = float(df[col].median(skipna=True))
-        df[col] = df[col].fillna(median_val)
-        numeric_fill_values[col] = median_val
-
-    scaler = StandardScaler()
-    if continuous_cols:
-        df[continuous_cols] = scaler.fit_transform(df[continuous_cols])
-
-    feature_cols = [
+    raw_string_predictor_columns = [
         c
         for c in df.columns
-        if c not in outcome_cols and c != id_col and pd.api.types.is_numeric_dtype(df[c])
+        if c != id_col and c not in outcome_cols and (pd.api.types.is_object_dtype(df[c]) or pd.api.types.is_string_dtype(df[c]))
     ]
 
     dataset_out_dir = output_dir / dataset_name
     dataset_out_dir.mkdir(parents=True, exist_ok=True)
 
     master_out = dataset_out_dir / f"{dataset_name}_master_table_step3.csv"
-    features_out = dataset_out_dir / f"{dataset_name}_clustering_features_step3.csv"
-    scaler_out = dataset_out_dir / f"{dataset_name}_step3_scaler.joblib"
     metadata_out = dataset_out_dir / f"{dataset_name}_step3_metadata.json"
 
+    # Remove old learned Step 3 artifacts so the output folder cannot mix leaky and leakage-safe versions.
+    for obsolete_path in [
+        dataset_out_dir / f"{dataset_name}_clustering_features_step3.csv",
+        dataset_out_dir / f"{dataset_name}_step3_scaler.joblib",
+    ]:
+        if obsolete_path.exists():
+            obsolete_path.unlink()
+
     df.to_csv(master_out, index=False)
-    df[[id_col] + feature_cols].to_csv(features_out, index=False)
-    joblib.dump({"scaler": scaler, "continuous_columns": continuous_cols}, scaler_out)
 
     metadata = {
         "dataset": dataset_name,
@@ -264,31 +133,25 @@ def process_step3(dataset_name: str, input_csv: Path, output_dir: Path) -> None:
         "n_columns": int(df.shape[1]),
         "resolved_columns": resolved,
         "outcome_columns_excluded_from_clustering": sorted(list(outcome_cols)),
-        "binary_columns": sorted(binary_columns),
-        "continuous_columns": sorted(continuous_cols),
-        "clustering_feature_columns": feature_cols,
-        "categorical_imputation": categorical_fill_values,
-        "continuous_median_imputation": numeric_fill_values,
+        "raw_numeric_predictor_columns": raw_numeric_predictor_columns,
+        "raw_string_predictor_columns": raw_string_predictor_columns,
+        "step3_mode": "raw_cleaning_only",
         "outputs": {
             "master_table": str(master_out),
-            "clustering_features": str(features_out),
-            "scaler": str(scaler_out),
         },
     }
     metadata_out.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    print(f"[{dataset_name}] rows={df.shape[0]} features={len(feature_cols)}")
+    print(f"[{dataset_name}] rows={df.shape[0]} raw_numeric_predictors={len(raw_numeric_predictor_columns)}")
     print(f"[{dataset_name}] saved: {master_out}")
-    print(f"[{dataset_name}] saved: {features_out}")
-    print(f"[{dataset_name}] saved: {scaler_out}")
     print(f"[{dataset_name}] saved: {metadata_out}")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Step 3 preprocessing for UCSF and UPenn merged atlas+clinical files: "
-            "missing-value handling, encoding, standardization, and clustering feature export."
+            "Step 3 raw cleaning for UCSF and UPenn merged atlas+clinical files: "
+            "replace text missing markers, coerce numeric-looking columns, resolve key aliases, and save a leakage-safe master table."
         )
     )
     parser.add_argument(
