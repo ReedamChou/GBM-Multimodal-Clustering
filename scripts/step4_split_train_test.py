@@ -197,6 +197,8 @@ def encode_binary_with_train_rules(
 
     return output_col, unknown_col, {
         "source_column": source_col,
+        "mapping_rules": mapper.__name__,
+        "encoded_value_meaning": {"0": "negative_or_reference", "1": "positive_or_alternative"},
         "fill_value": fill_value,
         "train_missing_rate": missing_rate,
         "unknown_indicator_added": unknown_col is not None,
@@ -237,6 +239,8 @@ def encode_lobe_with_train_rules(
         "source_column": source_col,
         "fill_value": fill_value,
         "train_missing_rate": missing_rate,
+        "categories_in_order": ["frontal", "temporal", "parietal", "occipital"],
+        "one_hot_column_order": created_columns,
     }
 
 
@@ -305,10 +309,12 @@ def preprocess_split_with_train_only_rules(
         binary_encoding_meta[out_col] = enc_meta
 
     dominant_lobe_meta = None
+    one_hot_column_order: list[str] = []
     dominant_lobe_col = resolved.get("dominant_lobe")
     if dominant_lobe_col is not None and dominant_lobe_col in train_df.columns and dominant_lobe_col in test_df.columns:
         created_cols, dominant_lobe_meta = encode_lobe_with_train_rules(train_df, test_df, dominant_lobe_col)
         binary_columns.extend(created_cols)
+        one_hot_column_order.extend(created_cols)
 
     categorical_fill_meta = fill_string_columns_with_train_rules(train_df, test_df, id_col, outcome_cols)
 
@@ -346,6 +352,35 @@ def preprocess_split_with_train_only_rules(
         test_df[col] = test_numeric.fillna(fill_value)
         discrete_fill_values[col] = int(fill_value) if float(fill_value).is_integer() else float(fill_value)
 
+    dropped_feature_rules: list[dict] = []
+    dropped_columns: list[str] = []
+
+    for col in continuous_cols + discrete_numeric_cols:
+        train_numeric = pd.to_numeric(train_df[col], errors="coerce")
+        non_null_unique = train_numeric.dropna().nunique()
+        if non_null_unique == 0:
+            dropped_feature_rules.append(
+                {
+                    "column": col,
+                    "rule": "drop_all_missing_in_train_after_imputation",
+                }
+            )
+            dropped_columns.append(col)
+        elif non_null_unique <= 1:
+            dropped_feature_rules.append(
+                {
+                    "column": col,
+                    "rule": "drop_zero_variance_in_train",
+                }
+            )
+            dropped_columns.append(col)
+
+    if dropped_columns:
+        continuous_cols = [c for c in continuous_cols if c not in dropped_columns]
+        discrete_numeric_cols = [c for c in discrete_numeric_cols if c not in dropped_columns]
+        train_df = train_df.drop(columns=dropped_columns, errors="ignore")
+        test_df = test_df.drop(columns=dropped_columns, errors="ignore")
+
     scaler = StandardScaler()
     if continuous_cols:
         train_df = train_df.astype({col: "float64" for col in continuous_cols}, copy=False)
@@ -363,6 +398,7 @@ def preprocess_split_with_train_only_rules(
         "id_column": id_col,
         "outcome_columns": sorted(outcome_cols),
         "binary_columns": sorted(binary_columns),
+        "one_hot_column_order": one_hot_column_order,
         "continuous_columns": sorted(continuous_cols),
         "discrete_numeric_columns": sorted(discrete_numeric_cols),
         "feature_columns": feature_cols,
@@ -371,6 +407,8 @@ def preprocess_split_with_train_only_rules(
         "categorical_fill": categorical_fill_meta,
         "continuous_median_imputation": continuous_fill_values,
         "discrete_numeric_fill": discrete_fill_values,
+        "dropped_feature_rules": dropped_feature_rules,
+        "dropped_feature_columns": dropped_columns,
         "scaler": scaler,
     }
     return train_df, test_df, preprocessing_meta
@@ -440,6 +478,7 @@ def process_dataset(
     train_features_out = dataset_out / f"{dataset}_train_clustering_features_step4.csv"
     test_features_out = dataset_out / f"{dataset}_test_clustering_features_step4.csv"
     scaler_out = dataset_out / f"{dataset}_train_scaler_step4.joblib"
+    preprocessing_out = dataset_out / f"{dataset}_train_preprocessing_step4.joblib"
     split_meta_out = dataset_out / f"{dataset}_step4_split_metadata.json"
 
     train_df.to_csv(train_master_out, index=False)
@@ -447,26 +486,37 @@ def process_dataset(
     train_features.to_csv(train_features_out, index=False)
     test_features.to_csv(test_features_out, index=False)
 
-    joblib.dump(
-        {
-            "preprocessing_version": "train_only_step4_v2",
-            "scaler": scaler,
-            "continuous_columns": continuous_cols,
-            "feature_columns": feature_cols,
-            "binary_columns": preprocessing_meta["binary_columns"],
-            "discrete_numeric_columns": preprocessing_meta["discrete_numeric_columns"],
-            "binary_encoding": preprocessing_meta["binary_encoding"],
-            "dominant_lobe_encoding": preprocessing_meta["dominant_lobe_encoding"],
-            "categorical_fill": preprocessing_meta["categorical_fill"],
-            "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
-            "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
-            "id_column": id_col,
-            "dataset": dataset,
-            "random_state": random_state,
-            "test_size": test_size,
+    preprocessing_artifact = {
+        "preprocessing_version": "train_only_step4_v3_auditable",
+        "dataset": dataset,
+        "id_column": id_col,
+        "outcome_columns": preprocessing_meta["outcome_columns"],
+        "random_state": random_state,
+        "test_size": test_size,
+        "feature_columns": feature_cols,
+        "continuous_columns": continuous_cols,
+        "binary_columns": preprocessing_meta["binary_columns"],
+        "discrete_numeric_columns": preprocessing_meta["discrete_numeric_columns"],
+        "one_hot_column_order": preprocessing_meta["one_hot_column_order"],
+        "binary_encoding": preprocessing_meta["binary_encoding"],
+        "dominant_lobe_encoding": preprocessing_meta["dominant_lobe_encoding"],
+        "categorical_fill": preprocessing_meta["categorical_fill"],
+        "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
+        "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
+        "dropped_feature_rules": preprocessing_meta["dropped_feature_rules"],
+        "dropped_feature_columns": preprocessing_meta["dropped_feature_columns"],
+        "scaler": scaler,
+        "scaler_mean_by_column": {
+            col: float(val) for col, val in zip(continuous_cols, getattr(scaler, "mean_", []))
         },
-        scaler_out,
-    )
+        "scaler_scale_by_column": {
+            col: float(val) for col, val in zip(continuous_cols, getattr(scaler, "scale_", []))
+        },
+    }
+
+    joblib.dump(preprocessing_artifact, preprocessing_out)
+    # Keep the legacy filename as a compatibility alias for downstream tools or old docs.
+    joblib.dump(preprocessing_artifact, scaler_out)
 
     split_meta = {
         "dataset": dataset,
@@ -488,17 +538,22 @@ def process_dataset(
         "discrete_numeric_columns": preprocessing_meta["discrete_numeric_columns"],
         "preprocessing": {
             "fit_scope": "train_only",
+            "artifact_version": preprocessing_artifact["preprocessing_version"],
             "binary_encoding": preprocessing_meta["binary_encoding"],
             "dominant_lobe_encoding": preprocessing_meta["dominant_lobe_encoding"],
+            "one_hot_column_order": preprocessing_meta["one_hot_column_order"],
             "categorical_fill": preprocessing_meta["categorical_fill"],
             "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
             "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
+            "dropped_feature_rules": preprocessing_meta["dropped_feature_rules"],
+            "dropped_feature_columns": preprocessing_meta["dropped_feature_columns"],
         },
         "outputs": {
             "train_master": str(train_master_out),
             "test_master": str(test_master_out),
             "train_features": str(train_features_out),
             "test_features": str(test_features_out),
+            "train_preprocessing": str(preprocessing_out),
             "train_scaler": str(scaler_out),
             "log_file": str(dataset_out / "step4.log"),
         },

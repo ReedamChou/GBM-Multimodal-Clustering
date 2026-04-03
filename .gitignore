@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+results/repeated-validation/runs
+.cache
+
 results/iteration-1/step*
 results/iteration-2/step*
 

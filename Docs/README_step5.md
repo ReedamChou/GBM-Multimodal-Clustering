@@ -11,12 +11,18 @@ For each dataset (UCSF and UPenn), it performs:
 1. Loads Step 4 split metadata and train feature table.
 2. Uses k values 2, 3, 4, 5, and 6 by default.
 3. Runs sklearn.cluster.SpectralClustering for each k.
-4. Computes silhouette score for each successful k using sklearn.metrics.silhouette_score.
-5. Selects the best k based on highest silhouette score.
+4. Computes multiple k-selection criteria for each successful k:
+- silhouette score
+- gap statistic
+- train-resample stability using ARI
+- train survival separation
+- holdout survival consistency
+- biological interpretability of the high-risk cluster
+5. Combines those criteria into a multi-metric selection score instead of using silhouette alone.
 6. Saves train patient cluster labels for the selected best k.
 7. Computes and saves cluster centroids as mean feature vectors for each cluster.
-8. Saves a silhouette scores table and a summary selection JSON.
-9. Generates a silhouette elbow plot PNG if matplotlib is available.
+8. Saves the full k-evaluation table and a summary selection JSON.
+9. Generates a multi-metric k-evaluation plot PNG if matplotlib is available.
 
 
 ## Logger behavior
@@ -29,9 +35,9 @@ Each dataset has a dedicated log file:
 The logger records:
 
 1. Input files and row or feature counts.
-2. Per-k clustering status and silhouette values.
-3. Selected best k and best silhouette.
-4. Output paths written for labels, centroids, and scores.
+2. Per-k clustering status and multi-metric scores.
+3. Selected best k and the weighted selection score.
+4. Output paths written for labels, centroids, and evaluation tables.
 5. Plot generation status.
 
 
@@ -60,7 +66,7 @@ python -m venv .venv
 
 3. Install required packages:
 
-pip install pandas numpy scikit-learn joblib matplotlib
+pip install pandas numpy scikit-learn joblib matplotlib lifelines scipy
 
 
 ## Quick start
@@ -88,6 +94,10 @@ Change random seed and neighbors:
 
 python scripts/step5_spectral_clustering.py --random-state 42 --n-neighbors 10 --output-dir outputs/step5
 
+Control the new k-selection metrics:
+
+python scripts/step5_spectral_clustering.py --gap-refs 5 --stability-resamples 8 --stability-sample-fraction 0.80 --output-dir outputs/step5
+
 Use custom Step 4 folder:
 
 python scripts/step5_spectral_clustering.py --step4-dir outputs/step4 --output-dir outputs/step5
@@ -98,6 +108,7 @@ python scripts/step5_spectral_clustering.py --step4-dir outputs/step4 --output-d
 For each dataset, Step 5 writes:
 
 - {dataset}_step5_silhouette_scores.csv
+- {dataset}_step5_k_evaluation.csv
 - {dataset}_step5_train_cluster_labels.csv
 - {dataset}_step5_cluster_centroids.csv
 - {dataset}_step5_selection.json
@@ -115,6 +126,8 @@ Folders:
 1. Spectral clustering in sklearn does not provide a direct predict method for unseen data.
 2. For Step 7, use centroids and nearest-centroid assignment for test patients, as your pipeline specifies.
 3. Centroids are computed in feature space as the mean vector of training samples per cluster.
+4. Step 5 now uses the Step 4 holdout split as a model-selection validation proxy when scoring candidate k values.
+5. That improves k selection, but it means the Step 4 holdout is no longer a pristine untouched final test set. For publication-grade final reporting, keep an additional external or nested test layer.
 
 
 ## Troubleshooting

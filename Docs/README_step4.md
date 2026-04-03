@@ -19,9 +19,12 @@ For each dataset (UCSF and UPenn), it does the following:
 - train-derived fills for categorical and discrete numeric fields
 - binary encoding for sex, MGMT, and IDH
 - dominant lobe cleaning and one-hot encoding
+- explicit one-hot output column order recording
+- train-only dropped-feature rules for all-missing or zero-variance numeric columns
 - StandardScaler for continuous clustering features
-6. Applies the exact same train-fitted preprocessing rules to test.
-7. Saves train/test master tables, train/test clustering feature tables, preprocessor, metadata, and log file.
+6. Freezes the learned preprocessing contract into a reusable Step 4 preprocessing artifact.
+7. Applies the exact same train-fitted preprocessing rules to test.
+8. Saves train/test master tables, train/test clustering feature tables, preprocessing artifact, compatibility scaler artifact, metadata, and log file.
 
 This enforces the Step 4 anti-leakage rule: no fitting on test data.
 
@@ -38,7 +41,7 @@ The logger records:
 1. Input files used.
 2. Selected stratification strategy and OS bin count.
 3. Row counts and feature counts.
-4. Train-only preprocessing and scaling step.
+4. Train-only preprocessing, dropped-feature rules, and scaling step.
 5. Quick train vs test checks for MGMT mean and OS median.
 6. Output file locations.
 
@@ -105,6 +108,7 @@ For each dataset, the script writes:
 - {dataset}_test_master_table_step4.csv
 - {dataset}_train_clustering_features_step4.csv
 - {dataset}_test_clustering_features_step4.csv
+- {dataset}_train_preprocessing_step4.joblib
 - {dataset}_train_scaler_step4.joblib
 - {dataset}_step4_split_metadata.json
 - step4.log
@@ -117,10 +121,11 @@ Folders:
 
 ## Notes
 
-1. Step 4 is now the only place where imputers, encoders, and scaler are fit.
+1. Step 4 is now the only place where imputers, encoders, one-hot ordering rules, dropped-feature rules, and scaler are fit.
 2. All learned preprocessing is derived from train only and then applied unchanged to test.
-3. Clustering should be run on train clustering features from Step 4, not on any full-cohort Step 3 export.
-4. Keep test set untouched until validation steps.
+3. The new `*_train_preprocessing_step4.joblib` file is the auditable preprocessing artifact for that split.
+4. `*_train_scaler_step4.joblib` is kept as a compatibility alias containing the same full preprocessing payload.
+5. Clustering should be run on train clustering features from Step 4, not on any full-cohort Step 3 export.
 
 
 ## Troubleshooting

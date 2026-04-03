@@ -1,0 +1,36 @@
+Repeated Validation Summary
+Seeds run: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+Datasets: ucsf, upenn
+
+UCSF
+- Repeated splits: 30
+- Chosen k counts: k=3: 19, k=4: 11
+- High-risk cluster label counts: cluster 0: 12, cluster 1: 7, cluster 2: 9, cluster 3: 2
+- Train survival significant in 100.0% of runs
+- Test survival significant in 100.0% of runs
+- Median train log-rank p-value: 1.735e-09
+- Median test log-rank p-value: 5.703e-05
+- High-risk cluster proportion stayed within 10 percentage points in 93.3% of runs
+- Median high-risk proportion shift: -1.31 percentage points
+- Dominant lobe matched train in 93.3% of runs
+- High-risk NC/EN was rank 1 on test in 20.0% of runs
+- High-risk NC/EN was rank 1 or 2 on test in 83.3% of runs
+- Most common train survival ordering: 1>2>0
+- Most common test survival ordering: 2>1>0
+
+UPENN
+- Repeated splits: 30
+- Chosen k counts: k=2: 3, k=3: 27
+- High-risk cluster label counts: cluster 0: 8, cluster 1: 9, cluster 2: 13
+- Train survival significant in 33.3% of runs
+- Test survival significant in 23.3% of runs
+- Median train log-rank p-value: 0.0829
+- Median test log-rank p-value: 0.4796
+- High-risk cluster proportion stayed within 10 percentage points in 100.0% of runs
+- Median high-risk proportion shift: 1.00 percentage points
+- Dominant lobe matched train in 80.0% of runs
+- High-risk NC/EN was rank 1 on test in 50.0% of runs
+- High-risk NC/EN was rank 1 or 2 on test in 93.3% of runs
+- Most common train survival ordering: 2>1>0
+- Most common test survival ordering: 2>1>0
+- Temporal-lobe replication observed in 80.0% of runs where it was expected
