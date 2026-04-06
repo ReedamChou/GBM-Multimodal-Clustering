@@ -1,0 +1,49 @@
+The short answer is yes: UCSF and UPenn are meaningfully shifted cohorts, and that likely explains part of the weaker UPenn validation.
+
+Main Shifts
+
+Age differs moderately before clustering.
+
+UCSF median age: 59.0
+UPenn median age: 63.58
+SMD: -0.443
+Mann-Whitney p=5.99e-11
+MGMT is a major shift, both biologically and in missingness.
+
+UCSF methylated rate: 72.60%
+UPenn methylated rate: 42.37%
+absolute gap: 30.23 percentage points
+chi-square p=7.59e-15
+UPenn MGMT missingness is also much worse: 57.1% vs 17.0%
+IDH is also strongly shifted.
+
+UCSF mutant rate: 20.56%
+UPenn mutant rate: 3.11%
+absolute gap: 17.45 percentage points
+chi-square p=1.22e-17
+Lobe distribution is very different.
+
+UCSF dominant lobe mode: frontal
+UPenn dominant lobe mode: temporal
+chi-square p=5.82e-26
+Cramer’s V: 0.335
+frontal: 64.47% in UCSF vs 35.02% in UPenn
+temporal: 16.17% in UCSF vs 43.37% in UPenn
+The core global ratio features are less shifted than the clinical variables.
+
+NC/EN median: 0.367 vs 0.416, SMD 0.059
+ED/EN median: 2.979 vs 3.014, SMD 0.109
+TBI median: 0.056 vs 0.053, SMD 0.105
+So the biggest cohort shift is not really TBI or ED/EN. It is age, biomarker prevalence, lobe distribution, missingness, and endpoint definition.
+
+Missingness and Endpoint
+
+Missingness differs a lot in several imaging features too, especially:
+
+occipital_*_ratio: about 0.289 absolute missingness difference
+temporal_*_ratio: about 0.189
+global_ed_en_ratio and global_nc_en_ratio: about 0.138
+The survival endpoint mismatch is real and important:
+
+UCSF uses OS from initial diagnosis, based on your dataset note in step11_survival_endpoint_definition.csv
+UPenn uses Survival_from_surgery_days_UPDATED, which is from surgery

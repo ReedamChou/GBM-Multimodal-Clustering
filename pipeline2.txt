@@ -1,0 +1,297 @@
+Current GBM Multimodal Clustering Pipeline
+
+This file describes the pipeline as it currently exists in the repo, not the older idealized plan in Pipline.txt.
+
+Important note:
+- Steps 1 and 2 from the original plan are not implemented as standalone scripts in this repo.
+- The implemented pipeline begins from already prepared merged cohort tables in Step 3.
+- The current pipeline also includes extra robustness and validation layers beyond the original Step 7.
+
+
+Step 1: Source data assumption
+Current status:
+- Not implemented as a script in this repo.
+
+What is assumed instead:
+- You already have merged UCSF and UPenn tables containing imaging-derived atlas features plus clinical variables.
+- These are expected in:
+  - Clinical+Atlas Merged Data/UCSF_sri24_atlas_features_merged.csv
+  - Clinical+Atlas Merged Data/UPenn_sri24_atlas_features_merged.csv
+
+
+Step 2: Imaging feature extraction assumption
+Current status:
+- Not implemented as a script in this repo.
+
+What is assumed instead:
+- The merged input tables already contain the imaging features used downstream, such as:
+  - global_nc_en_ratio
+  - global_ed_en_ratio
+  - global_ed_total_ratio
+  - tumor_burden_index
+  - per-lobe ED/EN/NC ratios
+  - dominant brain lobe
+
+
+Step 3: Build leakage-safe master tables
+Script:
+- scripts/step3_build_master_feature_table.py
+
+Purpose:
+- Read the merged UCSF and UPenn input CSVs.
+- Replace textual missing markers with true missing values.
+- Convert numeric-looking columns to numeric types.
+- Resolve important column aliases like patient ID, MGMT, IDH, OS, censoring, and dominant lobe.
+- Save a raw-cleaned master table for each cohort.
+
+What Step 3 does not do anymore:
+- No imputation
+- No encoding
+- No scaling
+- No train/test splitting
+
+Key outputs:
+- outputs/step3/ucsf/ucsf_master_table_step3.csv
+- outputs/step3/upenn/upenn_master_table_step3.csv
+- outputs/step3/ucsf/ucsf_step3_metadata.json
+- outputs/step3/upenn/upenn_step3_metadata.json
+
+
+Step 4: Leakage-safe train/test split and frozen preprocessing
+Script:
+- scripts/step4_split_train_test.py
+
+Purpose:
+- Split each cohort into train and test.
+- Fit all learned preprocessing on train only.
+- Apply the exact same preprocessing to test.
+
+Current preprocessing owned by Step 4:
+- stratified splitting using MGMT and OS when feasible
+- continuous median imputation
+- discrete numeric fill rules
+- categorical fill rules
+- binary encoding for sex, MGMT, IDH
+- dominant lobe canonicalization and one-hot encoding
+- explicit one-hot output column order
+- dropped-feature rules for all-missing or zero-variance numeric columns
+- z-score scaling of continuous features
+
+Key outputs:
+- outputs/step4/<dataset>/<dataset>_train_master_table_step4.csv
+- outputs/step4/<dataset>/<dataset>_test_master_table_step4.csv
+- outputs/step4/<dataset>/<dataset>_train_clustering_features_step4.csv
+- outputs/step4/<dataset>/<dataset>_test_clustering_features_step4.csv
+- outputs/step4/<dataset>/<dataset>_train_preprocessing_step4.joblib
+- outputs/step4/<dataset>/<dataset>_train_scaler_step4.joblib
+- outputs/step4/<dataset>/<dataset>_step4_split_metadata.json
+
+Important meaning:
+- This is the core anti-leakage step.
+- No learned preprocessing should come from the full cohort anymore.
+
+
+Step 5: Spectral clustering and multi-criteria k selection
+Script:
+- scripts/step5_spectral_clustering.py
+
+Purpose:
+- Run spectral clustering on the Step 4 train feature matrix.
+- Evaluate multiple candidate values of k.
+- Choose k using a weighted multi-criteria score rather than silhouette alone.
+
+Current k-selection criteria:
+- silhouette score
+- gap statistic
+- train-resample stability using ARI
+- train survival separation
+- holdout survival consistency
+- biological interpretability of the high-risk cluster
+
+Important caveat:
+- In the current Step 5 design, the Step 4 holdout split is used as a model-selection validation proxy.
+- That makes k selection stronger than silhouette-only selection.
+- But that also means Step 7 is no longer a perfectly untouched final test in the strictest publication sense.
+- That is why Step 10 was added later.
+
+Key outputs:
+- outputs/step5/<dataset>/<dataset>_step5_k_evaluation.csv
+- outputs/step5/<dataset>/<dataset>_step5_train_cluster_labels.csv
+- outputs/step5/<dataset>/<dataset>_step5_cluster_centroids.csv
+- outputs/step5/<dataset>/<dataset>_step5_selection.json
+- outputs/step5/<dataset>/<dataset>_step5_silhouette_elbow.png
+
+
+Step 6: Train-set cluster characterization
+Script:
+- scripts/step6_characterize_clusters.py
+
+Purpose:
+- Merge Step 4 train master data with Step 5 train cluster labels.
+- Characterize each train cluster biologically and clinically.
+- Identify the high-risk cluster.
+
+Current train-set analyses:
+- median OS and IQR
+- MGMT methylated percentage
+- IDH mutant percentage
+- mean NC/EN
+- mean ED/EN
+- mean tumor burden index
+- dominant lobe mode
+- mean age
+- Kaplan-Meier and log-rank test
+- Kruskal-Wallis tests for continuous features
+- chi-square tests for MGMT and lobe distribution
+- BH correction for multiple testing
+- rule-based high-risk cluster labeling
+
+Key outputs:
+- outputs/step6/<dataset>/<dataset>_step6_cluster_summary_train.csv
+- outputs/step6/<dataset>/<dataset>_step6_metadata.json
+- plus KM plots and inferential test tables
+
+
+Step 7: Held-out test-set assignment and validation
+Script:
+- scripts/step7_validate_test_set.py
+
+Purpose:
+- Take the centroids learned from the train set.
+- Assign each Step 4 test patient to the nearest train centroid.
+- Check whether the train-derived cluster structure generalizes.
+
+Current test-set validation checks:
+- cluster proportion similarity between train and test
+- test-set Kaplan-Meier and log-rank
+- whether the high-risk cluster keeps similar lobe identity
+- whether the high-risk cluster keeps similar NC/EN behavior
+- whether the high-risk cluster stays about the same relative size
+
+Important note:
+- Step 7 does not recluster the test set.
+- It assigns test patients to the train-derived cluster structure.
+
+Key outputs:
+- outputs/step7/<dataset>/<dataset>_step7_cluster_summary_test.csv
+- outputs/step7/<dataset>/<dataset>_step7_cluster_proportions_comparison.csv
+- outputs/step7/<dataset>/<dataset>_step7_metadata.json
+- outputs/step7/<dataset>/<dataset>_step7_kaplan_meier_test.png
+
+
+Step 8: Repeated validation across many random splits
+Script:
+- scripts/step8_repeated_validation.py
+
+Purpose:
+- Repeat Steps 4 to 7 across many seeds.
+- Check whether the findings are stable or just the product of one lucky split.
+
+What it records per run:
+- selected k
+- high-risk cluster label
+- train and test log-rank p-values
+- survival ordering
+- dominant lobe matching
+- high-risk cluster proportion drift
+- NC/EN rank of the high-risk cluster on test
+
+Key outputs:
+- results/repeated-validation/runs/
+- results/repeated-validation/summary/repeated_validation_run_metrics.csv
+- results/repeated-validation/summary/repeated_validation_summary.txt
+
+
+Step 9: Cluster stability analysis on the train set
+Script:
+- scripts/step9_cluster_stability.py
+
+Purpose:
+- Measure whether the train-set clusters themselves are reproducible under perturbation.
+
+Current stability analyses:
+- bootstrap resampling
+- consensus clustering
+- ARI vs the baseline train clustering
+- pairwise ARI across bootstrap runs
+- patient-by-patient co-clustering frequencies
+- consensus heatmaps
+
+Key outputs:
+- outputs/step9/<dataset>/<dataset>_step9_summary.json
+- outputs/step9/<dataset>/<dataset>_step9_bootstrap_runs.csv
+- outputs/step9/<dataset>/<dataset>_step9_pairwise_ari.csv
+- outputs/step9/<dataset>/<dataset>_step9_consensus_matrix.csv
+- outputs/step9/<dataset>/<dataset>_step9_consensus_labels.csv
+- outputs/step9/<dataset>/<dataset>_step9_patient_stability.csv
+- outputs/step9/<dataset>/<dataset>_step9_consensus_heatmap.png
+
+
+Step 10: Nested validation for publication-grade internal evaluation
+Script:
+- scripts/step10_nested_validation.py
+
+Purpose:
+- Keep an untouched outer test split.
+- Use only an inner split for k selection.
+- Refit on the full outer development set.
+- Evaluate once on the untouched outer test.
+
+Why this exists:
+- After Step 5 started using the holdout split for k selection, Step 7 was no longer a pristine final test layer.
+- Step 10 restores a cleaner publication-grade internal validation design.
+
+Current nested structure:
+- outer split = untouched final test
+- inner split = model selection only
+- final evaluation = on untouched outer test
+
+Key outputs:
+- results/nested-validation/runs/
+- results/nested-validation/summary/nested_validation_run_metrics.csv
+- results/nested-validation/summary/nested_validation_summary.txt
+
+
+Step 11: Cohort shift analysis between UCSF and UPenn
+Script:
+- scripts/step11_cohort_shift_analysis.py
+
+Purpose:
+- Compare UCSF and UPenn before clustering to see whether the cohorts differ substantially.
+
+Current comparisons:
+- age
+- MGMT
+- IDH
+- missingness patterns
+- lobe distribution
+- NC/EN, ED/EN, TBI distributions
+- survival endpoint definition
+
+Why this matters:
+- If UPenn is genuinely shifted relative to UCSF, weaker UPenn validation may reflect cohort differences rather than only model weakness.
+
+Key outputs:
+- outputs/step11/step11_feature_distribution_comparison.csv
+- outputs/step11/step11_lobe_distribution_comparison.csv
+- outputs/step11/step11_missingness_comparison.csv
+- outputs/step11/step11_survival_endpoint_definition.csv
+- outputs/step11/step11_summary.json
+- outputs/step11/step11_cohort_shift_report.txt
+
+
+Current interpretation of the full pipeline
+
+1. Step 3 to Step 7 define the main clustering workflow.
+2. Step 8 checks whether that workflow is stable across many random splits.
+3. Step 9 checks whether the discovered train clusters are reproducible.
+4. Step 10 provides a stronger internal nested validation layer for publication.
+5. Step 11 checks whether UCSF and UPenn differ enough that cross-cohort replication should be interpreted carefully.
+
+
+Current practical recommendation
+
+If reporting results for publication:
+- use Step 10 nested validation results as the cleanest internal evaluation
+- use Step 8 and Step 9 as robustness analyses
+- use Step 11 to justify cohort-aware interpretation, especially for weaker UPenn findings

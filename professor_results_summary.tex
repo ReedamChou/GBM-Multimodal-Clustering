@@ -1,0 +1,94 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+
+\begin{document}
+
+\begin{table}[ht]
+\centering
+\caption{Compact summary of clustering, validation, and cohort-shift results for UCSF and UPenn.}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabularx}{\textwidth}{@{}l l c c@{}}
+\toprule
+\textbf{Section} & \textbf{Metric} & \textbf{UCSF} & \textbf{UPenn} \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Clustering and Validation}} \\
+ & Cohort size & 501 & 611 \\
+ & Current selected $k$ & 3 & 3 \\
+ & Current train log-rank $p$ & $1.98 \times 10^{-9}$ & 0.210 \\
+ & Current holdout log-rank $p$ & $7.16 \times 10^{-5}$ & 0.101 \\
+ & Repeated-split test significance & 30/30 runs & 7/30 runs \\
+ & Nested untouched-test significance & 10/10 runs & 1/10 runs \\
+ & Consensus vs baseline ARI & 0.869 & 0.870 \\
+ & Pairwise bootstrap ARI median & 0.608 & 0.541 \\
+ & Main message & Robust clustering and survival replication & Cluster structure exists, but prognostic replication is weak \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Pre-clustering Cohort Differences}} \\
+ & Median age & 59.0 & 63.58 \\
+ & MGMT methylated rate & 72.60\% & 42.37\% \\
+ & IDH mutant rate & 20.56\% & 3.11\% \\
+ & Dominant lobe mode & Frontal & Temporal \\
+ & Survival time origin & From diagnosis & From surgery \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[ht]
+\centering
+\caption{More detailed validation summary for discussion with faculty.}
+\renewcommand{\arraystretch}{1.18}
+\begin{tabularx}{\textwidth}{@{}l l c c@{}}
+\toprule
+\textbf{Layer} & \textbf{Metric} & \textbf{UCSF} & \textbf{UPenn} \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Current Single-Split Pipeline}} \\
+ & Train / test size & 350 / 151 & 427 / 184 \\
+ & Selected $k$ & 3 & 3 \\
+ & High-risk cluster label & 0 & 2 \\
+ & Train log-rank $p$ & $1.98 \times 10^{-9}$ & 0.210 \\
+ & Test log-rank $p$ & $7.16 \times 10^{-5}$ & 0.101 \\
+ & High-risk train / test proportion & 67.14\% / 64.90\% & 18.50\% / 16.85\% \\
+ & High-risk dominant lobe, train / test & Frontal / Frontal & Temporal / Parietal \\
+ & High-risk NC/EN rank on test & 2 & 2 \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Repeated Validation (30 random splits)}} \\
+ & Most common selected $k$ & 3 & 3 \\
+ & Train survival significant & 30/30 & 10/30 \\
+ & Test survival significant & 30/30 & 7/30 \\
+ & Median train log-rank $p$ & $1.74 \times 10^{-9}$ & 0.0829 \\
+ & Median test log-rank $p$ & $5.70 \times 10^{-5}$ & 0.4796 \\
+ & Lobe matched train on test & 28/30 & 24/30 \\
+ & High-risk NC/EN rank 1 or 2 on test & 25/30 & 28/30 \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Cluster Stability (100 bootstraps on train set)}} \\
+ & Consensus vs baseline ARI & 0.869 & 0.870 \\
+ & Bootstrap ARI vs baseline, median & 0.669 & 0.738 \\
+ & Pairwise bootstrap ARI, median & 0.608 & 0.541 \\
+ & Mean within-cluster consensus & 0.850 & 0.799 \\
+ & Mean between-cluster consensus & 0.165 & 0.127 \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Nested Validation (10 untouched outer test runs)}} \\
+ & Selected $k$ counts & $k=2$: 5, $k=3$: 5 & $k=2$: 1, $k=3$: 8, $k=4$: 1 \\
+ & Outer-train survival significant & 10/10 & 2/10 \\
+ & Untouched outer-test survival significant & 10/10 & 1/10 \\
+ & Median outer-train log-rank $p$ & $1.30 \times 10^{-11}$ & 0.1324 \\
+ & Median untouched outer-test log-rank $p$ & 0.000618 & 0.6013 \\
+ & High-risk proportion within 10 points & 10/10 & 10/10 \\
+ & Lobe matched train on untouched test & 9/10 & 9/10 \\
+\midrule
+\multicolumn{4}{@{}l}{\textbf{Pre-clustering Cohort Shift}} \\
+ & Median age & 59.0 & 63.58 \\
+ & MGMT methylated rate & 72.60\% & 42.37\% \\
+ & IDH mutant rate & 20.56\% & 3.11\% \\
+ & Dominant lobe mode & Frontal & Temporal \\
+ & Survival endpoint & From diagnosis & From surgery \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\noindent\textbf{Interpretation.}
+UCSF remains strong across the single split, repeated validation, and nested validation layers. UPenn shows reasonably stable cluster structure, but survival separation is not consistently reproduced, especially once an untouched outer test set is enforced. The large cohort differences in MGMT, IDH, lobe distribution, age, and survival endpoint suggest that UPenn likely needs harmonization or cohort-aware analysis rather than more tuning alone.
+
+\end{document}
