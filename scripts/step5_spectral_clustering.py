@@ -7,12 +7,21 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from lifelines.statistics import multivariate_logrank_test
 from sklearn.cluster import SpectralClustering
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 
-from step6_characterize_clusters import build_event_observed, compute_cluster_summary, first_present, pick_high_risk_cluster
-from step7_validate_test_set import assign_to_nearest_centroid, build_cluster_proportion_comparison, build_high_risk_validation
+from cluster_validation_utils import (
+    assign_to_nearest_centroid,
+    build_cluster_proportion_comparison,
+    build_high_risk_validation,
+    compute_cluster_summary,
+    compute_logrank_p,
+    first_present,
+    is_lowest_median_os,
+    pick_high_risk_cluster,
+)
+from pipeline_preprocessing import map_mgmt_to_binary
+from step4_split_train_test import preprocess_split_with_train_only_rules, split_with_best_stratification
 
 try:
     import matplotlib.pyplot as plt
@@ -169,34 +178,6 @@ def compute_bootstrap_stability(
     return float(np.mean(ari_values)), float(np.median(ari_values))
 
 
-def compute_logrank_p(
-    df: pd.DataFrame,
-    cluster_col: str,
-    os_col: str | None,
-    censor_col: str | None,
-    survival_status_col: str | None,
-) -> float | None:
-    if os_col is None or os_col not in df.columns:
-        return None
-
-    durations = pd.to_numeric(df[os_col], errors="coerce")
-    events = build_event_observed(df, censor_col, survival_status_col)
-    groups = pd.to_numeric(df[cluster_col], errors="coerce")
-
-    valid = durations.notna() & events.notna() & groups.notna()
-    if valid.sum() < 10:
-        return None
-    if groups[valid].astype(int).nunique() < 2:
-        return None
-
-    result = multivariate_logrank_test(
-        durations[valid],
-        groups[valid].astype(int),
-        events[valid].astype(int),
-    )
-    return float(result.p_value)
-
-
 def find_analysis_columns(df: pd.DataFrame, step4_meta: dict) -> dict[str, str | None]:
     return {
         "os": step4_meta.get("os_column"),
@@ -238,16 +219,177 @@ def p_value_strength(p_value: float | None, max_strength: float = 8.0) -> float:
     return float(min(max_strength, max(0.0, -np.log10(max(float(p_value), 1e-12)))))
 
 
-def is_lowest_median_os(summary_df: pd.DataFrame, cluster_label: int) -> bool:
-    if summary_df.empty or "median_os" not in summary_df.columns:
-        return False
-    tmp = summary_df[["cluster_label", "median_os"]].copy()
-    tmp["median_os"] = pd.to_numeric(tmp["median_os"], errors="coerce")
-    tmp = tmp.dropna(subset=["median_os"])
-    if tmp.empty:
-        return False
-    lowest_cluster = int(tmp.sort_values(["median_os", "cluster_label"], ascending=[True, True]).iloc[0]["cluster_label"])
-    return lowest_cluster == int(cluster_label)
+def select_best_k(scores_df: pd.DataFrame) -> pd.Series:
+    valid_scores = scores_df[scores_df["status"] == "ok"].copy()
+    if valid_scores.empty:
+        raise RuntimeError("No valid k candidates were produced during nested Step 5 selection.")
+    return valid_scores.sort_values(
+        ["selection_score", "survival_consistency_score", "stability_norm", "silhouette_norm"],
+        ascending=[False, False, False, False],
+    ).iloc[0]
+
+
+def load_outer_step4_raw_train_split(
+    step4_meta: dict,
+    expected_train_ids: pd.Series,
+    expected_test_ids: pd.Series,
+    logger: logging.Logger,
+) -> tuple[pd.DataFrame, dict, dict]:
+    source_master_path = resolve_path(step4_meta["source_master_table"])
+    source_step3_metadata_path = resolve_path(step4_meta["source_step3_metadata"])
+    split_membership_path = resolve_path(step4_meta["outputs"]["split_membership"])
+
+    if not source_master_path.exists():
+        raise FileNotFoundError(f"Step 3 master table referenced by Step 4 metadata was not found: {source_master_path}")
+    if not source_step3_metadata_path.exists():
+        raise FileNotFoundError(f"Step 3 metadata referenced by Step 4 metadata was not found: {source_step3_metadata_path}")
+    if not split_membership_path.exists():
+        raise FileNotFoundError(f"Step 4 split membership file was not found: {split_membership_path}")
+
+    step3_meta = load_json(source_step3_metadata_path)
+    step3_df = pd.read_csv(source_master_path)
+    resolved = step3_meta.get("resolved_columns", {})
+
+    id_col = step4_meta.get("id_column") or resolved.get("id") or "ID"
+    membership_df = pd.read_csv(split_membership_path)
+    if id_col not in membership_df.columns or "split" not in membership_df.columns:
+        raise ValueError(
+            f"Step 4 split membership file must contain columns '{id_col}' and 'split': {split_membership_path}"
+        )
+
+    expected_train = set(expected_train_ids.astype("string").tolist())
+    expected_test = set(expected_test_ids.astype("string").tolist())
+    membership_train = set(
+        membership_df.loc[membership_df["split"].astype("string").str.lower() == "train", id_col].astype("string").tolist()
+    )
+    membership_test = set(
+        membership_df.loc[membership_df["split"].astype("string").str.lower() == "test", id_col].astype("string").tolist()
+    )
+
+    if membership_train != expected_train or membership_test != expected_test:
+        raise RuntimeError(
+            "Step 5 found a mismatch between the Step 4 split membership artifact and the exported "
+            "Step 4 train/test tables; aborting nested-safe k selection because the split contract is inconsistent."
+        )
+
+    outer_train_raw_df = step3_df[step3_df[id_col].astype("string").isin(membership_train)].copy()
+    actual_train = set(outer_train_raw_df[id_col].astype("string").tolist())
+    if actual_train != expected_train:
+        raise RuntimeError(
+            "Step 5 could not recover the Step 4 outer train rows from the Step 3 master table using the "
+            "explicit split membership artifact."
+        )
+
+    logger.info(
+        "Recovered Step 4 outer train rows from explicit split membership: train_rows=%s",
+        len(outer_train_raw_df),
+    )
+
+    return outer_train_raw_df.reset_index(drop=True), step3_meta, {
+        "source_master_table": str(source_master_path),
+        "source_step3_metadata": str(source_step3_metadata_path),
+        "split_membership_file": str(split_membership_path),
+        "verified_against_step4_outputs": True,
+    }
+
+
+def run_inner_k_selection(
+    dataset: str,
+    outer_train_raw_df: pd.DataFrame,
+    step3_meta: dict,
+    step4_meta: dict,
+    id_col: str,
+    k_values: list[int],
+    random_state: int,
+    inner_test_size: float,
+    n_neighbors: int,
+    gap_refs: int,
+    stability_resamples: int,
+    stability_sample_fraction: float,
+    logger: logging.Logger,
+) -> tuple[pd.DataFrame, pd.Series, dict[str, object], dict[str, object]]:
+    resolved = step3_meta.get("resolved_columns", {})
+    os_col = resolved.get("os")
+    mgmt_source_col = resolved.get("mgmt")
+
+    inner_dev_df = outer_train_raw_df.copy()
+    inner_mgmt_col = None
+    if mgmt_source_col is not None and mgmt_source_col in inner_dev_df.columns:
+        inner_dev_df["__mgmt_strata_bin__"] = map_mgmt_to_binary(inner_dev_df[mgmt_source_col])
+        inner_mgmt_col = "__mgmt_strata_bin__"
+
+    inner_train_raw_df, inner_val_raw_df, inner_stratification = split_with_best_stratification(
+        df=inner_dev_df,
+        id_col=id_col,
+        mgmt_col=inner_mgmt_col,
+        os_col=os_col,
+        test_size=inner_test_size,
+        random_state=random_state + 1000,
+        logger=logger,
+    )
+    inner_train_raw_df = inner_train_raw_df.drop(columns=["__mgmt_strata_bin__"], errors="ignore")
+    inner_val_raw_df = inner_val_raw_df.drop(columns=["__mgmt_strata_bin__"], errors="ignore")
+
+    inner_train_df, inner_val_df, inner_preprocessing_meta = preprocess_split_with_train_only_rules(
+        inner_train_raw_df,
+        inner_val_raw_df,
+        step3_meta,
+        max_missing_feature_frac=float(step4_meta.get("preprocessing", {}).get("max_missing_feature_frac", 1.0)),
+        corr_prune_threshold=float(step4_meta.get("preprocessing", {}).get("corr_prune_threshold", 1.01)),
+        winsorize_lower_quantile=float(
+            min(
+                [
+                    bounds.get("lower_quantile", 0.0)
+                    for bounds in (step4_meta.get("preprocessing", {}).get("winsorization_bounds", {}) or {}).values()
+                ]
+                or [0.0]
+            )
+        ),
+        winsorize_upper_quantile=float(
+            max(
+                [
+                    bounds.get("upper_quantile", 1.0)
+                    for bounds in (step4_meta.get("preprocessing", {}).get("winsorization_bounds", {}) or {}).values()
+                ]
+                or [1.0]
+            )
+        ),
+        scaler_type=str(step4_meta.get("preprocessing", {}).get("scaler_type", "standard")),
+        power_transform=str(step4_meta.get("preprocessing", {}).get("power_transform", "none")),
+    )
+    inner_feature_cols = inner_preprocessing_meta["feature_columns"]
+    if not inner_feature_cols:
+        raise RuntimeError("Nested Step 5 inner preprocessing produced zero clustering features.")
+
+    inner_x_train, _ = clean_feature_matrix(inner_train_df, inner_feature_cols)
+    scores_df, _, selection_config = evaluate_k_values(
+        dataset=dataset,
+        x_train=inner_x_train,
+        train_master_df=inner_train_df,
+        test_master_df=inner_val_df,
+        test_features_df=inner_val_df[[id_col] + inner_feature_cols].copy(),
+        id_col=id_col,
+        feature_cols=inner_feature_cols,
+        k_values=sorted(set(k_values)),
+        random_state=random_state + 2000,
+        n_neighbors=n_neighbors,
+        gap_refs=gap_refs,
+        stability_resamples=stability_resamples,
+        stability_sample_fraction=stability_sample_fraction,
+        logger=logger,
+        step4_meta={"os_column": os_col},
+    )
+    best_row = select_best_k(scores_df)
+
+    return scores_df, best_row, selection_config, {
+        "train_rows": int(len(inner_train_df)),
+        "validation_rows": int(len(inner_val_df)),
+        "validation_size_within_step4_train": float(inner_test_size),
+        "split_random_state": int(random_state + 1000),
+        "selection_random_state": int(random_state + 2000),
+        "stratification": inner_stratification,
+        "feature_count": int(len(inner_feature_cols)),
+    }
 
 
 def compute_biological_interpretability_score(high_risk_validation: dict) -> float:
@@ -517,7 +659,7 @@ def evaluate_k_values(
     )
 
     selection_config = {
-        "method": "multi_criteria_step5_v2",
+        "method": "multi_criteria_step5_nested_v3",
         "weights": {
             "silhouette_norm": 0.15,
             "gap_norm": 0.15,
@@ -530,9 +672,9 @@ def evaluate_k_values(
         "stability_resamples": stability_resamples,
         "stability_sample_fraction": stability_sample_fraction,
         "selection_note": (
-            "This Step 5 selector now uses the Step 4 holdout split as a model-selection validation proxy. "
-            "That improves k selection, but it also means the same holdout is no longer a pristine final test set. "
-            "For publication-grade final evaluation, keep an untouched external or nested test layer beyond this step."
+            "Step 5 now performs nested-safe k selection inside the Step 4 train split only. "
+            "Candidate k values are scored on an inner train/validation split, then the selected k is refit "
+            "once on the full Step 4 train set. The Step 4 test split remains untouched until Step 7."
         ),
     }
     return result_df, artifacts, selection_config
@@ -543,6 +685,7 @@ def process_dataset(
     step4_dir: Path,
     output_dir: Path,
     k_values: list[int],
+    inner_test_size: float,
     random_state: int,
     n_neighbors: int,
     gap_refs: int,
@@ -582,40 +725,42 @@ def process_dataset(
     if not available_features:
         raise ValueError(f"{dataset}: no Step 4 feature columns found in Step 4 train/test feature CSVs.")
 
-    x_train, fill_medians = clean_feature_matrix(df_train_features, available_features)
-    logger.info("Rows=%s | feature_count=%s", x_train.shape[0], x_train.shape[1])
-
-    scores_df, artifacts, selection_config = evaluate_k_values(
+    outer_train_raw_df, step3_meta, outer_split_source_meta = load_outer_step4_raw_train_split(
+        step4_meta=split_meta,
+        expected_train_ids=df_train_master[id_col],
+        expected_test_ids=df_test_master[id_col],
+        logger=logger,
+    )
+    scores_df, best_row, selection_config, inner_selection_meta = run_inner_k_selection(
         dataset=dataset,
-        x_train=x_train,
-        train_master_df=df_train_master,
-        test_master_df=df_test_master,
-        test_features_df=df_test_features[[id_col] + available_features].copy(),
+        outer_train_raw_df=outer_train_raw_df,
+        step3_meta=step3_meta,
+        step4_meta=split_meta,
         id_col=id_col,
-        feature_cols=available_features,
         k_values=sorted(set(k_values)),
         random_state=random_state,
+        inner_test_size=inner_test_size,
         n_neighbors=n_neighbors,
         gap_refs=gap_refs,
         stability_resamples=stability_resamples,
         stability_sample_fraction=stability_sample_fraction,
         logger=logger,
-        step4_meta=split_meta,
     )
 
-    valid_scores = scores_df[scores_df["status"] == "ok"].copy()
-    best_row = valid_scores.sort_values(
-        ["selection_score", "survival_consistency_score", "stability_norm", "silhouette_norm"],
-        ascending=[False, False, False, False],
-    ).iloc[0]
-
     best_k = int(best_row["k"])
-    best_labels = artifacts[best_k]["labels"]
-    best_centroids = artifacts[best_k]["centroids"]
     best_silhouette = float(best_row["silhouette"])
+    x_train, fill_medians = clean_feature_matrix(df_train_features, available_features)
+    best_labels = fit_spectral_labels(
+        x_train,
+        k=best_k,
+        random_state=random_state + 3000,
+        n_neighbors=n_neighbors,
+    )
+    best_centroids = build_centroids(x_train, best_labels, available_features)
 
+    logger.info("Rows=%s | feature_count=%s", x_train.shape[0], x_train.shape[1])
     logger.info(
-        "Selected best_k=%s selection_score=%.4f silhouette=%.4f gap=%.4f stability=%.4f",
+        "Selected best_k=%s from nested inner selection and refit on full Step 4 train: selection_score=%.4f silhouette=%.4f gap=%.4f stability=%.4f",
         best_k,
         float(best_row["selection_score"]),
         float(best_row["silhouette"]),
@@ -656,12 +801,32 @@ def process_dataset(
         "best_selection_score": float(best_row["selection_score"]),
         "selection_method": selection_config["method"],
         "selection_config": selection_config,
+        "k_selection_scope": {
+            "mode": "nested_inner_split_within_step4_train",
+            "outer_split": {
+                "source": "step4_split_membership",
+                "train_rows": int(df_train_master.shape[0]),
+                "test_rows": int(df_test_master.shape[0]),
+                "test_size": split_meta.get("split", {}).get("test_size"),
+                "random_state": split_meta.get("split", {}).get("random_state"),
+                "stratification": split_meta.get("split", {}).get("stratification"),
+                **outer_split_source_meta,
+            },
+            "inner_split": inner_selection_meta,
+            "step4_holdout_used_for_k_selection": False,
+        },
+        "final_fit_scope": {
+            "mode": "refit_on_full_step4_train_after_inner_selection",
+            "train_rows": int(x_train.shape[0]),
+            "held_out_test_rows": int(df_test_features.shape[0]),
+            "final_fit_random_state": int(random_state + 3000),
+        },
         "selected_k_metrics": {
             "silhouette": float(best_row["silhouette"]),
             "gap_statistic": float(best_row["gap_statistic"]),
             "bootstrap_ari_median": float(best_row["bootstrap_ari_median"]),
-            "train_logrank_p": float(best_row["train_logrank_p"]) if not pd.isna(best_row["train_logrank_p"]) else None,
-            "test_logrank_p": float(best_row["test_logrank_p"]) if not pd.isna(best_row["test_logrank_p"]) else None,
+            "inner_train_logrank_p": float(best_row["train_logrank_p"]) if not pd.isna(best_row["train_logrank_p"]) else None,
+            "inner_validation_logrank_p": float(best_row["test_logrank_p"]) if not pd.isna(best_row["test_logrank_p"]) else None,
             "biological_interpretability": float(best_row["biological_interpretability"]),
             "survival_consistency_score": float(best_row["survival_consistency_score"]),
         },
@@ -689,7 +854,7 @@ def process_dataset(
             plt.plot(plot_df["k"], plot_df["gap_statistic"], marker="s", label="Gap statistic")
             plt.plot(plot_df["k"], plot_df["bootstrap_ari_median"], marker="^", label="Bootstrap ARI median")
             plt.plot(plot_df["k"], plot_df["selection_score"], marker="D", label="Selection score")
-            plt.title(f"{dataset.upper()} Step 5 Multi-Criteria k Evaluation")
+            plt.title(f"{dataset.upper()} Step 5 Nested Inner-Split k Evaluation")
             plt.xlabel("Number of clusters (k)")
             plt.ylabel("Metric value")
             plt.grid(alpha=0.3)
@@ -713,8 +878,8 @@ def process_dataset(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Step 5: run spectral clustering on Step 4 train feature tables, evaluate k with "
-            "multi-criteria scoring, and save train labels plus centroids for the selected solution."
+            "Step 5: run nested-safe spectral clustering selection inside the Step 4 train split, "
+            "then refit the selected k on the full Step 4 train set and save train labels plus centroids."
         )
     )
     parser.add_argument(
@@ -742,6 +907,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=[2, 3, 4, 5, 6],
         help="List of k values to evaluate.",
+    )
+    parser.add_argument(
+        "--inner-test-size",
+        type=float,
+        default=0.25,
+        help="Validation split fraction carved from the Step 4 train set for nested Step 5 k selection.",
     )
     parser.add_argument(
         "--n-neighbors",
@@ -784,12 +955,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if not (0.0 < args.inner_test_size < 1.0):
+        raise ValueError("--inner-test-size must be between 0 and 1.")
+
     for dataset in args.datasets:
         process_dataset(
             dataset=dataset,
             step4_dir=args.step4_dir,
             output_dir=args.output_dir,
             k_values=args.k_values,
+            inner_test_size=args.inner_test_size,
             random_state=args.random_state,
             n_neighbors=args.n_neighbors,
             gap_refs=args.gap_refs,

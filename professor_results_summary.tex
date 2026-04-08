@@ -6,6 +6,20 @@
 
 \begin{document}
 
+\section*{Pipeline Overview}
+A multi-step pipeline was developed to identify and validate multimodal subtypes in Glioblastoma (GBM) cohorts from UCSF and UPenn. The current implementation exports explicit split membership from Step 4, shares one validation utility layer across Steps 5--7, keeps Step 8 as the single repeated-validation layer, and renders the narrative summaries from structured report data instead of hand-maintained metrics.
+
+\begin{itemize}
+    \item[\textbf{Step 3:}] \textbf{Master Table Creation.} Initial data cleaning resolves column aliases and missing-value markers, creating a consistent master table for each cohort.
+    \item[\textbf{Step 4:}] \textbf{Leakage-Safe Preprocessing.} The data is split into training and testing sets. All preprocessing steps are learned only on the training data, then applied to the test set. Step 4 also writes an explicit split-membership file.
+    \item[\textbf{Step 5:}] \textbf{Nested-Safe Spectral Clustering.} Spectral clustering is performed on the training data. The optimal number of clusters ($k$) is selected inside a train-only inner split using silhouette score, gap statistic, resample stability, survival separation, and biological interpretability.
+    \item[\textbf{Step 6:}] \textbf{Cluster Characterization.} The resulting training clusters are analyzed clinically and biologically, and a high-risk cluster is identified.
+    \item[\textbf{Step 7:}] \textbf{Held-out Validation.} Patients in the test set are assigned to the nearest train-derived centroid to validate prognostic and phenotypic generalization.
+    \item[\textbf{Step 8:}] \textbf{Repeated Evaluation.} The full workflow from Step 4 through Step 7 is rerun across many random splits to measure robustness.
+    \item[\textbf{Step 9:}] \textbf{Stability Analysis.} Bootstrap resampling and consensus clustering measure train-set reproducibility.
+    \item[\textbf{Step 11:}] \textbf{Cohort Shift Analysis.} Pre-clustering differences between UCSF and UPenn are quantified.
+\end{itemize}
+
 \begin{table}[ht]
 \centering
 \caption{Compact summary of clustering, validation, and cohort-shift results for UCSF and UPenn.}
@@ -16,19 +30,18 @@
 \midrule
 \multicolumn{4}{@{}l}{\textbf{Clustering and Validation}} \\
  & Cohort size & 501 & 611 \\
- & Current selected $k$ & 3 & 3 \\
- & Current train log-rank $p$ & $1.98 \times 10^{-9}$ & 0.210 \\
- & Current holdout log-rank $p$ & $7.16 \times 10^{-5}$ & 0.101 \\
- & Repeated-split test significance & 30/30 runs & 7/30 runs \\
- & Nested untouched-test significance & 10/10 runs & 1/10 runs \\
- & Consensus vs baseline ARI & 0.869 & 0.870 \\
- & Pairwise bootstrap ARI median & 0.608 & 0.541 \\
+ & Current selected $k$ & 2 & 2 \\
+ & Current train log-rank $p$ & 3.816e-09 & 0.7383 \\
+ & Current holdout log-rank $p$ & 1.08e-06 & 0.6249 \\
+ & Repeated-split test significance & 30/30 & 7/30 \\
+ & Consensus vs baseline ARI & 0.864 & 0.972 \\
+ & Pairwise bootstrap ARI median & 0.901 & 0.953 \\
  & Main message & Robust clustering and survival replication & Cluster structure exists, but prognostic replication is weak \\
 \midrule
 \multicolumn{4}{@{}l}{\textbf{Pre-clustering Cohort Differences}} \\
  & Median age & 59.0 & 63.58 \\
- & MGMT methylated rate & 72.60\% & 42.37\% \\
- & IDH mutant rate & 20.56\% & 3.11\% \\
+ & MGMT methylated rate & 72.60% & 42.37% \\
+ & IDH mutant rate & 20.56% & 3.11% \\
  & Dominant lobe mode & Frontal & Temporal \\
  & Survival time origin & From diagnosis & From surgery \\
 \bottomrule
@@ -45,43 +58,35 @@
 \midrule
 \multicolumn{4}{@{}l}{\textbf{Current Single-Split Pipeline}} \\
  & Train / test size & 350 / 151 & 427 / 184 \\
- & Selected $k$ & 3 & 3 \\
- & High-risk cluster label & 0 & 2 \\
- & Train log-rank $p$ & $1.98 \times 10^{-9}$ & 0.210 \\
- & Test log-rank $p$ & $7.16 \times 10^{-5}$ & 0.101 \\
- & High-risk train / test proportion & 67.14\% / 64.90\% & 18.50\% / 16.85\% \\
- & High-risk dominant lobe, train / test & Frontal / Frontal & Temporal / Parietal \\
- & High-risk NC/EN rank on test & 2 & 2 \\
+ & Selected $k$ & 2 & 2 \\
+ & High-risk cluster label & 0 & 1 \\
+ & Train log-rank $p$ & 3.816e-09 & 0.7383 \\
+ & Test log-rank $p$ & 1.08e-06 & 0.6249 \\
+ & High-risk train / test proportion & 84.57% / 77.48% & 65.57% / 60.87% \\
+ & High-risk dominant lobe, train / test & Frontal / Frontal & Temporal / Temporal \\
+ & High-risk NC/EN rank on test & 1 & 2 \\
 \midrule
-\multicolumn{4}{@{}l}{\textbf{Repeated Validation (30 random splits)}} \\
- & Most common selected $k$ & 3 & 3 \\
- & Train survival significant & 30/30 & 10/30 \\
+\multicolumn{4}{@{}l}{\textbf{Repeated Validation}} \\
+ & Runs & 30 & 30 \\
+ & Most common selected $k$ & 2 & 4 \\
+ & Train survival significant & 30/30 & 6/30 \\
  & Test survival significant & 30/30 & 7/30 \\
- & Median train log-rank $p$ & $1.74 \times 10^{-9}$ & 0.0829 \\
- & Median test log-rank $p$ & $5.70 \times 10^{-5}$ & 0.4796 \\
- & Lobe matched train on test & 28/30 & 24/30 \\
- & High-risk NC/EN rank 1 or 2 on test & 25/30 & 28/30 \\
+ & Median train log-rank $p$ & 4.591e-09 & 0.2148 \\
+ & Median test log-rank $p$ & 5.001e-06 & 0.2613 \\
+ & Lobe matched train on test & 29/30 & 27/30 \\
+ & High-risk NC/EN rank 1 or 2 on test & 30/30 & 27/30 \\
 \midrule
-\multicolumn{4}{@{}l}{\textbf{Cluster Stability (100 bootstraps on train set)}} \\
- & Consensus vs baseline ARI & 0.869 & 0.870 \\
- & Bootstrap ARI vs baseline, median & 0.669 & 0.738 \\
- & Pairwise bootstrap ARI, median & 0.608 & 0.541 \\
- & Mean within-cluster consensus & 0.850 & 0.799 \\
- & Mean between-cluster consensus & 0.165 & 0.127 \\
-\midrule
-\multicolumn{4}{@{}l}{\textbf{Nested Validation (10 untouched outer test runs)}} \\
- & Selected $k$ counts & $k=2$: 5, $k=3$: 5 & $k=2$: 1, $k=3$: 8, $k=4$: 1 \\
- & Outer-train survival significant & 10/10 & 2/10 \\
- & Untouched outer-test survival significant & 10/10 & 1/10 \\
- & Median outer-train log-rank $p$ & $1.30 \times 10^{-11}$ & 0.1324 \\
- & Median untouched outer-test log-rank $p$ & 0.000618 & 0.6013 \\
- & High-risk proportion within 10 points & 10/10 & 10/10 \\
- & Lobe matched train on untouched test & 9/10 & 9/10 \\
+\multicolumn{4}{@{}l}{\textbf{Cluster Stability}} \\
+ & Consensus vs baseline ARI & 0.864 & 0.972 \\
+ & Bootstrap ARI vs baseline, median & 0.915 & 0.97 \\
+ & Pairwise bootstrap ARI, median & 0.901 & 0.953 \\
+ & Mean within-cluster consensus & 0.95 & 0.979 \\
+ & Mean between-cluster consensus & 0.0331 & 0.0199 \\
 \midrule
 \multicolumn{4}{@{}l}{\textbf{Pre-clustering Cohort Shift}} \\
  & Median age & 59.0 & 63.58 \\
- & MGMT methylated rate & 72.60\% & 42.37\% \\
- & IDH mutant rate & 20.56\% & 3.11\% \\
+ & MGMT methylated rate & 72.60% & 42.37% \\
+ & IDH mutant rate & 20.56% & 3.11% \\
  & Dominant lobe mode & Frontal & Temporal \\
  & Survival endpoint & From diagnosis & From surgery \\
 \bottomrule
@@ -89,6 +94,6 @@
 \end{table}
 
 \noindent\textbf{Interpretation.}
-UCSF remains strong across the single split, repeated validation, and nested validation layers. UPenn shows reasonably stable cluster structure, but survival separation is not consistently reproduced, especially once an untouched outer test set is enforced. The large cohort differences in MGMT, IDH, lobe distribution, age, and survival endpoint suggest that UPenn likely needs harmonization or cohort-aware analysis rather than more tuning alone.
+UCSF remains strong across the single split, repeated validation, and cluster-stability layers. UPenn shows reasonably stable cluster structure, but survival separation is not consistently reproduced. The large cohort differences in MGMT, IDH, lobe distribution, age, and survival endpoint suggest that UPenn likely needs harmonization or cohort-aware analysis rather than more tuning alone.
 
 \end{document}

@@ -10,7 +10,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import PowerTransformer, RobustScaler, StandardScaler
 
 from pipeline_preprocessing import (
     canonicalize_lobe,
@@ -274,6 +274,13 @@ def preprocess_split_with_train_only_rules(
     train_df: pd.DataFrame,
     test_df: pd.DataFrame,
     meta: dict,
+    *,
+    max_missing_feature_frac: float,
+    corr_prune_threshold: float,
+    winsorize_lower_quantile: float,
+    winsorize_upper_quantile: float,
+    scaler_type: str,
+    power_transform: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     train_df = train_df.copy()
     test_df = test_df.copy()
@@ -323,12 +330,47 @@ def preprocess_split_with_train_only_rules(
         for c in train_df.select_dtypes(include=[np.number]).columns
         if c != id_col and c not in outcome_cols
     ]
+    prunable_numeric_cols = [c for c in numeric_feature_cols if c not in binary_columns]
+
+    missing_feature_rules: list[dict] = []
+    missing_dropped_columns: list[str] = []
+    if max_missing_feature_frac < 1.0:
+        for col in prunable_numeric_cols:
+            train_missing_frac = float(pd.to_numeric(train_df[col], errors="coerce").isna().mean())
+            if train_missing_frac > max_missing_feature_frac:
+                missing_feature_rules.append(
+                    {
+                        "column": col,
+                        "rule": "drop_high_missingness_in_train",
+                        "train_missing_fraction": train_missing_frac,
+                        "threshold": max_missing_feature_frac,
+                    }
+                )
+                missing_dropped_columns.append(col)
+
+    if missing_dropped_columns:
+        numeric_feature_cols = [c for c in numeric_feature_cols if c not in missing_dropped_columns]
+        train_df = train_df.drop(columns=missing_dropped_columns, errors="ignore")
+        test_df = test_df.drop(columns=missing_dropped_columns, errors="ignore")
+
     continuous_cols = [
         c
         for c in numeric_feature_cols
         if c not in binary_columns and train_df[c].nunique(dropna=True) > 2
     ]
     discrete_numeric_cols = [c for c in numeric_feature_cols if c not in continuous_cols]
+    shape_transform_exclusions = {
+        resolved.get("age"),
+        "KPS",
+        "WHO CNS Grade",
+        "MGMT index",
+    }
+    shape_transform_cols = [
+        c
+        for c in continuous_cols
+        if c not in shape_transform_exclusions
+        and not any(token in c.lower() for token in ["age", "grade", "kps"])
+    ]
 
     continuous_fill_values: dict[str, float] = {}
     for col in continuous_cols:
@@ -352,8 +394,8 @@ def preprocess_split_with_train_only_rules(
         test_df[col] = test_numeric.fillna(fill_value)
         discrete_fill_values[col] = int(fill_value) if float(fill_value).is_integer() else float(fill_value)
 
-    dropped_feature_rules: list[dict] = []
-    dropped_columns: list[str] = []
+    dropped_feature_rules: list[dict] = [*missing_feature_rules]
+    dropped_columns: list[str] = [*missing_dropped_columns]
 
     for col in continuous_cols + discrete_numeric_cols:
         train_numeric = pd.to_numeric(train_df[col], errors="coerce")
@@ -381,7 +423,56 @@ def preprocess_split_with_train_only_rules(
         train_df = train_df.drop(columns=dropped_columns, errors="ignore")
         test_df = test_df.drop(columns=dropped_columns, errors="ignore")
 
-    scaler = StandardScaler()
+    winsorization_bounds: dict[str, dict[str, float]] = {}
+    if shape_transform_cols and 0.0 <= winsorize_lower_quantile < winsorize_upper_quantile <= 1.0:
+        if winsorize_lower_quantile > 0.0 or winsorize_upper_quantile < 1.0:
+            for col in shape_transform_cols:
+                lower = float(train_df[col].quantile(winsorize_lower_quantile))
+                upper = float(train_df[col].quantile(winsorize_upper_quantile))
+                train_df[col] = train_df[col].clip(lower=lower, upper=upper)
+                test_df[col] = test_df[col].clip(lower=lower, upper=upper)
+                winsorization_bounds[col] = {
+                    "lower_quantile": winsorize_lower_quantile,
+                    "upper_quantile": winsorize_upper_quantile,
+                    "lower_value": lower,
+                    "upper_value": upper,
+                }
+
+    fitted_power_transformer = None
+    if shape_transform_cols and power_transform != "none":
+        fitted_power_transformer = PowerTransformer(method=power_transform, standardize=False)
+        train_df = train_df.astype({col: "float64" for col in shape_transform_cols}, copy=False)
+        test_df = test_df.astype({col: "float64" for col in shape_transform_cols}, copy=False)
+        train_df.loc[:, shape_transform_cols] = fitted_power_transformer.fit_transform(train_df[shape_transform_cols])
+        test_df.loc[:, shape_transform_cols] = fitted_power_transformer.transform(test_df[shape_transform_cols])
+
+    corr_pruned_columns: list[str] = []
+    if corr_prune_threshold < 1.0:
+        corr_candidate_cols = continuous_cols + discrete_numeric_cols
+        if len(corr_candidate_cols) >= 2:
+            corr_matrix = train_df[corr_candidate_cols].corr().abs()
+            upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+            corr_pruned_columns = [
+                col
+                for col in upper.columns
+                if any(pd.to_numeric(upper[col], errors="coerce").fillna(0.0) >= corr_prune_threshold)
+            ]
+            if corr_pruned_columns:
+                for col in corr_pruned_columns:
+                    dropped_feature_rules.append(
+                        {
+                            "column": col,
+                            "rule": "drop_high_correlation_in_train",
+                            "threshold": corr_prune_threshold,
+                        }
+                    )
+                dropped_columns.extend(corr_pruned_columns)
+                continuous_cols = [c for c in continuous_cols if c not in corr_pruned_columns]
+                discrete_numeric_cols = [c for c in discrete_numeric_cols if c not in corr_pruned_columns]
+                train_df = train_df.drop(columns=corr_pruned_columns, errors="ignore")
+                test_df = test_df.drop(columns=corr_pruned_columns, errors="ignore")
+
+    scaler = RobustScaler() if scaler_type == "robust" else StandardScaler()
     if continuous_cols:
         train_df = train_df.astype({col: "float64" for col in continuous_cols}, copy=False)
         test_df = test_df.astype({col: "float64" for col in continuous_cols}, copy=False)
@@ -407,6 +498,13 @@ def preprocess_split_with_train_only_rules(
         "categorical_fill": categorical_fill_meta,
         "continuous_median_imputation": continuous_fill_values,
         "discrete_numeric_fill": discrete_fill_values,
+        "winsorization_bounds": winsorization_bounds,
+        "shape_transform_columns": sorted(shape_transform_cols),
+        "power_transform": power_transform,
+        "power_transformer": fitted_power_transformer,
+        "corr_prune_threshold": corr_prune_threshold,
+        "scaler_type": scaler_type,
+        "max_missing_feature_frac": max_missing_feature_frac,
         "dropped_feature_rules": dropped_feature_rules,
         "dropped_feature_columns": dropped_columns,
         "scaler": scaler,
@@ -421,6 +519,13 @@ def process_dataset(
     test_size: float,
     random_state: int,
     log_level: str,
+    *,
+    max_missing_feature_frac: float,
+    corr_prune_threshold: float,
+    winsorize_lower_quantile: float,
+    winsorize_upper_quantile: float,
+    scaler_type: str,
+    power_transform: str,
 ) -> None:
     dataset_out = output_dir / dataset
     logger = configure_logger(dataset_out / "step4.log", log_level)
@@ -462,7 +567,17 @@ def process_dataset(
         train_df = train_df.drop(columns=[mgmt_strata_col], errors="ignore")
         test_df = test_df.drop(columns=[mgmt_strata_col], errors="ignore")
 
-    train_df, test_df, preprocessing_meta = preprocess_split_with_train_only_rules(train_df, test_df, meta)
+    train_df, test_df, preprocessing_meta = preprocess_split_with_train_only_rules(
+        train_df,
+        test_df,
+        meta,
+        max_missing_feature_frac=max_missing_feature_frac,
+        corr_prune_threshold=corr_prune_threshold,
+        winsorize_lower_quantile=winsorize_lower_quantile,
+        winsorize_upper_quantile=winsorize_upper_quantile,
+        scaler_type=scaler_type,
+        power_transform=power_transform,
+    )
 
     feature_cols = preprocessing_meta["feature_columns"]
     continuous_cols = preprocessing_meta["continuous_columns"]
@@ -477,6 +592,7 @@ def process_dataset(
     test_master_out = dataset_out / f"{dataset}_test_master_table_step4.csv"
     train_features_out = dataset_out / f"{dataset}_train_clustering_features_step4.csv"
     test_features_out = dataset_out / f"{dataset}_test_clustering_features_step4.csv"
+    split_membership_out = dataset_out / f"{dataset}_step4_split_membership.csv"
     scaler_out = dataset_out / f"{dataset}_train_scaler_step4.joblib"
     preprocessing_out = dataset_out / f"{dataset}_train_preprocessing_step4.joblib"
     split_meta_out = dataset_out / f"{dataset}_step4_split_metadata.json"
@@ -485,6 +601,14 @@ def process_dataset(
     test_df.to_csv(test_master_out, index=False)
     train_features.to_csv(train_features_out, index=False)
     test_features.to_csv(test_features_out, index=False)
+    split_membership_df = pd.concat(
+        [
+            pd.DataFrame({id_col: train_df[id_col].values, "split": "train"}),
+            pd.DataFrame({id_col: test_df[id_col].values, "split": "test"}),
+        ],
+        ignore_index=True,
+    )
+    split_membership_df.to_csv(split_membership_out, index=False)
 
     preprocessing_artifact = {
         "preprocessing_version": "train_only_step4_v3_auditable",
@@ -503,9 +627,16 @@ def process_dataset(
         "categorical_fill": preprocessing_meta["categorical_fill"],
         "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
         "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
+        "winsorization_bounds": preprocessing_meta["winsorization_bounds"],
+        "shape_transform_columns": preprocessing_meta["shape_transform_columns"],
+        "power_transform": preprocessing_meta["power_transform"],
+        "scaler_type": preprocessing_meta["scaler_type"],
+        "max_missing_feature_frac": preprocessing_meta["max_missing_feature_frac"],
+        "corr_prune_threshold": preprocessing_meta["corr_prune_threshold"],
         "dropped_feature_rules": preprocessing_meta["dropped_feature_rules"],
         "dropped_feature_columns": preprocessing_meta["dropped_feature_columns"],
         "scaler": scaler,
+        "power_transformer": preprocessing_meta["power_transformer"],
         "scaler_mean_by_column": {
             col: float(val) for col, val in zip(continuous_cols, getattr(scaler, "mean_", []))
         },
@@ -545,6 +676,12 @@ def process_dataset(
             "categorical_fill": preprocessing_meta["categorical_fill"],
             "continuous_median_imputation": preprocessing_meta["continuous_median_imputation"],
             "discrete_numeric_fill": preprocessing_meta["discrete_numeric_fill"],
+            "winsorization_bounds": preprocessing_meta["winsorization_bounds"],
+            "shape_transform_columns": preprocessing_meta["shape_transform_columns"],
+            "power_transform": preprocessing_meta["power_transform"],
+            "scaler_type": preprocessing_meta["scaler_type"],
+            "max_missing_feature_frac": preprocessing_meta["max_missing_feature_frac"],
+            "corr_prune_threshold": preprocessing_meta["corr_prune_threshold"],
             "dropped_feature_rules": preprocessing_meta["dropped_feature_rules"],
             "dropped_feature_columns": preprocessing_meta["dropped_feature_columns"],
         },
@@ -553,6 +690,7 @@ def process_dataset(
             "test_master": str(test_master_out),
             "train_features": str(train_features_out),
             "test_features": str(test_features_out),
+            "split_membership": str(split_membership_out),
             "train_preprocessing": str(preprocessing_out),
             "train_scaler": str(scaler_out),
             "log_file": str(dataset_out / "step4.log"),
@@ -622,6 +760,42 @@ def parse_args() -> argparse.Namespace:
         default="INFO",
         help="Logging level: DEBUG, INFO, WARNING, ERROR.",
     )
+    parser.add_argument(
+        "--max-missing-feature-frac",
+        type=float,
+        default=1.0,
+        help="Drop numeric clustering features whose train missing fraction exceeds this threshold. Default disables.",
+    )
+    parser.add_argument(
+        "--corr-prune-threshold",
+        type=float,
+        default=1.01,
+        help="Drop one feature from highly correlated numeric feature pairs at or above this absolute correlation threshold. Default disables.",
+    )
+    parser.add_argument(
+        "--winsorize-lower-quantile",
+        type=float,
+        default=0.0,
+        help="Lower train quantile for winsorization of continuous features. Default disables lower capping.",
+    )
+    parser.add_argument(
+        "--winsorize-upper-quantile",
+        type=float,
+        default=1.0,
+        help="Upper train quantile for winsorization of continuous features. Default disables upper capping.",
+    )
+    parser.add_argument(
+        "--scaler-type",
+        choices=["standard", "robust"],
+        default="standard",
+        help="Continuous-feature scaler to fit on the train set.",
+    )
+    parser.add_argument(
+        "--power-transform",
+        choices=["none", "yeo-johnson"],
+        default="none",
+        help="Optional train-only power transform applied to continuous features before scaling.",
+    )
     return parser.parse_args()
 
 
@@ -630,6 +804,10 @@ def main() -> None:
 
     if not (0.0 < args.test_size < 1.0):
         raise ValueError("--test-size must be between 0 and 1.")
+    if not (0.0 <= args.max_missing_feature_frac <= 1.0):
+        raise ValueError("--max-missing-feature-frac must be between 0 and 1.")
+    if not (0.0 <= args.winsorize_lower_quantile < args.winsorize_upper_quantile <= 1.0):
+        raise ValueError("--winsorize quantiles must satisfy 0 <= lower < upper <= 1.")
 
     for dataset in args.datasets:
         process_dataset(
@@ -639,6 +817,12 @@ def main() -> None:
             test_size=args.test_size,
             random_state=args.random_state,
             log_level=args.log_level,
+            max_missing_feature_frac=args.max_missing_feature_frac,
+            corr_prune_threshold=args.corr_prune_threshold,
+            winsorize_lower_quantile=args.winsorize_lower_quantile,
+            winsorize_upper_quantile=args.winsorize_upper_quantile,
+            scaler_type=args.scaler_type,
+            power_transform=args.power_transform,
         )
 
 

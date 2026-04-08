@@ -1,16 +1,16 @@
 Project: GBM multimodal clustering pipeline across UCSF and UPenn
 
 Current pipeline status
-- Implemented steps: Step 3 to Step 11
+- Implemented steps: Step 3 to Step 9, plus Step 11
 - Step 3: raw cleaning only
-- Step 4: leakage-safe train/test split and train-only preprocessing
-- Step 5: spectral clustering with multi-criteria k selection, not silhouette alone
-- Step 6: train-set cluster characterization
-- Step 7: held-out test assignment by nearest train centroid
-- Step 8: repeated validation across many random splits
-- Step 9: cluster stability analysis with bootstrap, consensus clustering, ARI, co-clustering heatmaps
-- Step 10: nested validation with untouched outer test set
-- Step 11: cohort shift analysis between UCSF and UPenn
+- Step 4: leakage-safe train/test split, train-only preprocessing, and explicit split membership export
+- Step 5: nested-safe spectral clustering with multi-criteria k selection using the Step 4 train split only
+- Step 6: train-set cluster characterization via shared summary utilities
+- Step 7: held-out test assignment by nearest train centroid via shared validation utilities
+- Step 8: repeated validation over many random splits using the shared evaluation runner
+- Step 9: train-set cluster stability analysis
+- Step 11: cohort-shift analysis between UCSF and UPenn
+- Project summaries are now rendered from a structured report-data artifact instead of hand-maintained metrics
 
 Data sizes
 - UCSF Step 3 master table: n=501 rows, 31 columns
@@ -21,47 +21,47 @@ Current default single-split pipeline results after leakage fix
   - UCSF train/test = 350 / 151
   - UPenn train/test = 427 / 184
 - Step 5 selected k:
-  - UCSF: k=3
-  - UPenn: k=3
+  - UCSF: k=2
+  - UPenn: k=2
 
 Current single-split train/test findings
-- UCSF Step 6 train log-rank p = 1.9818e-09
-- UCSF Step 7 test log-rank p = 7.1644e-05
+- UCSF Step 6 train log-rank p = 3.816e-09
+- UCSF Step 7 test log-rank p = 1.08e-06
 - UCSF high-risk cluster = cluster 0
-- UCSF high-risk train/test proportion = 67.14% / 64.90%
+- UCSF high-risk train/test proportion = 84.57% / 77.48%
 - UCSF high-risk dominant lobe = frontal in train and frontal in test
-- UCSF test high-risk NC/EN rank = 2 among test clusters
+- UCSF test high-risk NC/EN rank = 1 among test clusters
 
-- UPenn Step 6 train log-rank p = 0.2096
-- UPenn Step 7 test log-rank p = 0.1009
-- UPenn high-risk cluster = cluster 2
-- UPenn high-risk train/test proportion = 18.50% / 16.85%
-- UPenn high-risk dominant lobe = temporal in train, parietal in test
+- UPenn Step 6 train log-rank p = 0.7383
+- UPenn Step 7 test log-rank p = 0.6249
+- UPenn high-risk cluster = cluster 1
+- UPenn high-risk train/test proportion = 65.57% / 60.87%
+- UPenn high-risk dominant lobe = temporal in train, temporal in test
 - UPenn test high-risk NC/EN rank = 2 among test clusters
 
 Repeated validation across 30 random splits
 UCSF
-- Chosen k counts: k=3 in 19 runs, k=4 in 11 runs
+- Chosen k counts: k=2 in 29 runs, k=5 in 1 runs
 - Train survival significant in 30/30 runs
 - Test survival significant in 30/30 runs
-- Median train log-rank p = 1.735e-09
-- Median test log-rank p = 5.703e-05
-- High-risk cluster proportion within 10 percentage points in 28/30 runs
-- Dominant lobe matched train in 28/30 runs
-- High-risk NC/EN rank 1 on test in 6/30 runs
-- High-risk NC/EN rank 1 or 2 on test in 25/30 runs
+- Median train log-rank p = 4.591e-09
+- Median test log-rank p = 5.001e-06
+- High-risk cluster proportion within 10 percentage points in 29/30 runs
+- Dominant lobe matched train in 29/30 runs
+- High-risk NC/EN rank 1 on test in 30/30 runs
+- High-risk NC/EN rank 1 or 2 on test in 30/30 runs
 
 UPenn
-- Chosen k counts: k=3 in 27 runs, k=2 in 3 runs
-- Train survival significant in 10/30 runs
+- Chosen k counts: k=2 in 4 runs, k=3 in 9 runs, k=4 in 14 runs, k=5 in 3 runs
+- Train survival significant in 6/30 runs
 - Test survival significant in 7/30 runs
-- Median train log-rank p = 0.0829
-- Median test log-rank p = 0.4796
+- Median train log-rank p = 0.2148
+- Median test log-rank p = 0.2613
 - High-risk cluster proportion within 10 percentage points in 30/30 runs
-- Dominant lobe matched train in 24/30 runs
-- Temporal-lobe replication observed in 24/30 runs where expected
-- High-risk NC/EN rank 1 on test in 15/30 runs
-- High-risk NC/EN rank 1 or 2 on test in 28/30 runs
+- Dominant lobe matched train in 27/30 runs
+- Temporal-lobe replication observed in 24/24 runs where expected
+- High-risk NC/EN rank 1 on test in 23/30 runs
+- High-risk NC/EN rank 1 or 2 on test in 27/30 runs
 
 Interpretation from repeated validation
 - UCSF is robust under repeated splitting
@@ -69,85 +69,55 @@ Interpretation from repeated validation
 
 Cluster stability analysis on current train split, 100 bootstraps
 UCSF
-- best_k_from_step5 = 3
-- baseline silhouette = 0.2011
-- consensus vs original train clustering ARI = 0.8692
+- best_k_from_step5 = 2
+- baseline silhouette = 0.2082
+- consensus vs original train clustering ARI = 0.8638
 - bootstrap ARI vs full-train clustering:
-  - mean = 0.6835
-  - median = 0.6693
-  - 5th percentile = 0.4735
-  - 95th percentile = 0.8638
+  - mean = 0.9199
+  - median = 0.9151
+  - 5th percentile = 0.8517
+  - 95th percentile = 1
 - pairwise bootstrap ARI:
-  - mean = 0.6168
-  - median = 0.6084
+  - mean = 0.8935
+  - median = 0.9008
 - consensus strength:
-  - mean within-cluster co-clustering = 0.8499
-  - mean between-cluster co-clustering = 0.1654
-  - mean stability gap = 0.6844
+  - mean within-cluster co-clustering = 0.9502
+  - mean between-cluster co-clustering = 0.03305
+  - mean stability gap = 0.9171
 
 UPenn
-- best_k_from_step5 = 3
-- baseline silhouette = 0.2177
-- consensus vs original train clustering ARI = 0.8696
+- best_k_from_step5 = 2
+- baseline silhouette = 0.1547
+- consensus vs original train clustering ARI = 0.9718
 - bootstrap ARI vs full-train clustering:
-  - mean = 0.6490
-  - median = 0.7381
-  - 5th percentile = 0.2592
-  - 95th percentile = 0.8755
+  - mean = 0.9631
+  - median = 0.9701
+  - 5th percentile = 0.9229
+  - 95th percentile = 1
 - pairwise bootstrap ARI:
-  - mean = 0.5333
-  - median = 0.5406
+  - mean = 0.9378
+  - median = 0.9529
 - consensus strength:
-  - mean within-cluster co-clustering = 0.7988
-  - mean between-cluster co-clustering = 0.1271
-  - mean stability gap = 0.6717
+  - mean within-cluster co-clustering = 0.9788
+  - mean between-cluster co-clustering = 0.01994
+  - mean stability gap = 0.9589
 
 Interpretation from cluster stability
 - UPenn clustering structure is not random or collapsing
 - The main weakness in UPenn is prognostic generalization, not total absence of cluster structure
-
-Nested validation with untouched outer test set, 10 outer seeds
-This is the cleanest internal evaluation because k is selected only inside an inner split and final performance is measured on an untouched outer test set.
-
-UCSF
-- Selected k counts: k=2 in 5 runs, k=3 in 5 runs
-- Outer-train survival significant in 10/10 runs
-- Outer untouched test survival significant in 10/10 runs
-- Median outer-train log-rank p = 1.296e-11
-- Median outer untouched test log-rank p = 0.000618
-- High-risk cluster proportion within 10 percentage points in 10/10 runs
-- Dominant lobe matched train in 9/10 runs
-- High-risk NC/EN rank 1 or 2 on untouched test in 10/10 runs
-
-UPenn
-- Selected k counts: k=3 in 8 runs, k=2 in 1 run, k=4 in 1 run
-- Outer-train survival significant in 2/10 runs
-- Outer untouched test survival significant in 1/10 runs
-- Median outer-train log-rank p = 0.1324
-- Median outer untouched test log-rank p = 0.6013
-- High-risk cluster proportion within 10 percentage points in 10/10 runs
-- Dominant lobe matched train in 9/10 runs
-- High-risk NC/EN rank 1 or 2 on untouched test in 9/10 runs
-
-Interpretation from nested validation
-- UCSF remains strong even under publication-grade internal evaluation
-- UPenn remains weak prognostically on untouched outer test sets
-- Strongest defensible claim now:
-  - UCSF shows robust internal validation of a survival-relevant clustering structure
-  - UPenn shows partial phenotypic replication but weak prognostic replication
 
 Cohort shift analysis between UCSF and UPenn before clustering
 Age
 - UCSF median age = 59.0
 - UPenn median age = 63.58
 - SMD = -0.443
-- Mann-Whitney p = 5.99e-11
+- Mann-Whitney p = 5.987e-11
 
 MGMT
 - UCSF methylated rate = 72.60%
 - UPenn methylated rate = 42.37%
 - Absolute gap = 30.23 percentage points
-- Chi-square p = 7.59e-15
+- Chi-square p = 7.591e-15
 - MGMT missingness:
   - UCSF = 16.97%
   - UPenn = 57.12%
@@ -158,14 +128,14 @@ IDH
 - Absolute gap = 17.45 percentage points
 - Chi-square p = 1.22e-17
 - IDH missingness:
-  - UCSF = 0.0%
+  - UCSF = 0.00%
   - UPenn = 15.71%
 
 Lobe distribution
 - UCSF dominant lobe mode = frontal
 - UPenn dominant lobe mode = temporal
-- Chi-square p = 5.82e-26
-- Cramer’s V = 0.335
+- Chi-square p = 5.823e-26
+- Cramer's V = 0.335
 - Frontal dominance:
   - UCSF = 64.47%
   - UPenn = 35.02%
@@ -177,18 +147,18 @@ Global imaging feature distributions
 - NC/EN median:
   - UCSF = 0.367
   - UPenn = 0.416
-  - SMD = 0.059
-  - Mann-Whitney p = 3.19e-05
+  - SMD = 0.0592
+  - Mann-Whitney p = 3.186e-05
 - ED/EN median:
-  - UCSF = 2.979
-  - UPenn = 3.014
+  - UCSF = 2.98
+  - UPenn = 3.01
   - SMD = 0.109
   - Mann-Whitney p = 0.504
 - TBI median:
-  - UCSF = 0.056
-  - UPenn = 0.053
+  - UCSF = 0.0563
+  - UPenn = 0.0529
   - SMD = 0.105
-  - Mann-Whitney p = 0.364
+  - Mann-Whitney p = 0.3636
 
 Shared-column missingness differences
 - occipital_*_ratio missingness difference ≈ 0.289
@@ -208,12 +178,3 @@ Overall interpretation
 - Best current paper framing:
   - UCSF: robust internally validated survival-relevant subtype structure
   - UPenn: partial phenotype replication, limited prognostic replication
-
-What I want suggestions on
-- How to harmonize UCSF and UPenn more appropriately before clustering
-- Whether feature engineering should be changed to reduce cohort shift impact
-- Whether clustering should be cohort-specific first, then aligned across cohorts
-- Whether nested validation should be expanded further
-- Whether multivariable Cox modeling or supervised survival benchmarks should be added next
-- Whether MGMT/IDH missingness handling should be redesigned
-- Whether lobe-distribution imbalance suggests a domain adaptation or harmonization step

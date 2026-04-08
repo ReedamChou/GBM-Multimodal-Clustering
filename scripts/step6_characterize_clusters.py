@@ -11,6 +11,15 @@ from lifelines import KaplanMeierFitter
 from lifelines.statistics import multivariate_logrank_test
 from scipy import stats
 
+from cluster_validation_utils import (
+    build_event_observed,
+    compute_cluster_summary,
+    first_present,
+    normalize_minmax,
+    pick_high_risk_cluster,
+)
+from pipeline_preprocessing import canonicalize_lobe
+
 try:
     import matplotlib.pyplot as plt
 except Exception:  # pragma: no cover
@@ -59,32 +68,6 @@ def resolve_path(path_str: str) -> Path:
     return PROJECT_ROOT / p
 
 
-def first_present(columns: pd.Index, candidates: list[str]) -> str | None:
-    col_lookup = {str(c).lower(): c for c in columns}
-    for candidate in candidates:
-        c = col_lookup.get(candidate.lower())
-        if c is not None:
-            return str(c)
-    return None
-
-
-def canonicalize_lobe(series: pd.Series) -> pd.Series:
-    s = series.astype("string").str.strip().str.lower()
-    out = pd.Series("unknown", index=series.index, dtype="string")
-    out[s.str.contains("frontal", na=False)] = "frontal"
-    out[s.str.contains("temporal", na=False)] = "temporal"
-    out[s.str.contains("parietal", na=False)] = "parietal"
-    out[s.str.contains("occipital", na=False)] = "occipital"
-    return out
-
-
-def safe_mode_str(series: pd.Series, default: str = "unknown") -> str:
-    mode_values = series.dropna().mode()
-    if mode_values.empty:
-        return default
-    return str(mode_values.iloc[0])
-
-
 def bh_adjust(p_values: list[float]) -> list[float]:
     p = np.array(p_values, dtype=float)
     n = p.shape[0]
@@ -107,97 +90,6 @@ def bh_adjust(p_values: list[float]) -> list[float]:
     return adjusted.tolist()
 
 
-def normalize_minmax(series: pd.Series) -> pd.Series:
-    x = pd.to_numeric(series, errors="coerce")
-    x_min = x.min(skipna=True)
-    x_max = x.max(skipna=True)
-    if pd.isna(x_min) or pd.isna(x_max) or x_max == x_min:
-        return pd.Series([0.5] * len(series), index=series.index, dtype=float)
-    return (x - x_min) / (x_max - x_min)
-
-
-def build_event_observed(
-    df: pd.DataFrame,
-    censor_col: str | None,
-    survival_status_col: str | None,
-) -> pd.Series:
-    event = pd.Series(np.nan, index=df.index, dtype=float)
-
-    if survival_status_col and survival_status_col in df.columns:
-        s = df[survival_status_col].astype("string").str.strip().str.lower()
-        deceased_mask = s.str.contains("deceas|dead", na=False)
-        alive_mask = s.str.contains("alive|lost", na=False)
-        event.loc[deceased_mask] = 1.0
-        event.loc[alive_mask] = 0.0
-
-    if censor_col and censor_col in df.columns:
-        c = pd.to_numeric(df[censor_col], errors="coerce")
-        unique_vals = set(c.dropna().astype(int).unique().tolist())
-        if unique_vals.issubset({0, 1}):
-            event = event.fillna(c)
-
-    return event
-
-
-def compute_cluster_summary(
-    df: pd.DataFrame,
-    cluster_col: str,
-    os_col: str | None,
-    mgmt_col: str | None,
-    idh_col: str | None,
-    nc_en_col: str | None,
-    ed_en_col: str | None,
-    tbi_col: str | None,
-    age_col: str | None,
-    lobe_col: str | None,
-) -> pd.DataFrame:
-    records: list[dict] = []
-    for cluster_label, grp in df.groupby(cluster_col):
-        os_values = pd.to_numeric(grp[os_col], errors="coerce") if os_col and os_col in grp.columns else pd.Series(dtype=float)
-        mgmt_values = pd.to_numeric(grp[mgmt_col], errors="coerce") if mgmt_col and mgmt_col in grp.columns else pd.Series(dtype=float)
-        idh_values = pd.to_numeric(grp[idh_col], errors="coerce") if idh_col and idh_col in grp.columns else pd.Series(dtype=float)
-        nc_en_values = pd.to_numeric(grp[nc_en_col], errors="coerce") if nc_en_col and nc_en_col in grp.columns else pd.Series(dtype=float)
-        ed_en_values = pd.to_numeric(grp[ed_en_col], errors="coerce") if ed_en_col and ed_en_col in grp.columns else pd.Series(dtype=float)
-        tbi_values = pd.to_numeric(grp[tbi_col], errors="coerce") if tbi_col and tbi_col in grp.columns else pd.Series(dtype=float)
-        age_values = pd.to_numeric(grp[age_col], errors="coerce") if age_col and age_col in grp.columns else pd.Series(dtype=float)
-        lobe_values = canonicalize_lobe(grp[lobe_col]) if lobe_col and lobe_col in grp.columns else pd.Series(["unknown"] * len(grp), index=grp.index, dtype="string")
-
-        record = {
-            "cluster_label": int(cluster_label),
-            "n": int(grp.shape[0]),
-            "median_os": float(os_values.median(skipna=True)) if not os_values.empty else np.nan,
-            "os_iqr_q1": float(os_values.quantile(0.25)) if not os_values.empty else np.nan,
-            "os_iqr_q3": float(os_values.quantile(0.75)) if not os_values.empty else np.nan,
-            "mgmt_methylated_pct": float(mgmt_values.mean(skipna=True) * 100.0) if not mgmt_values.empty else np.nan,
-            "idh_mutant_pct": float(idh_values.mean(skipna=True) * 100.0) if not idh_values.empty else np.nan,
-            "mean_global_nc_en_ratio": float(nc_en_values.mean(skipna=True)) if not nc_en_values.empty else np.nan,
-            "mean_global_ed_en_ratio": float(ed_en_values.mean(skipna=True)) if not ed_en_values.empty else np.nan,
-            "mean_tumor_burden_index": float(tbi_values.mean(skipna=True)) if not tbi_values.empty else np.nan,
-            "dominant_lobe_mode": safe_mode_str(lobe_values, default="unknown"),
-            "mean_age": float(age_values.mean(skipna=True)) if not age_values.empty else np.nan,
-        }
-        records.append(record)
-
-    return pd.DataFrame(records).sort_values("cluster_label").reset_index(drop=True)
-
-
-def pick_high_risk_cluster(summary_df: pd.DataFrame) -> tuple[int, str]:
-    temp_bonus = (summary_df["dominant_lobe_mode"].astype("string").str.lower() == "temporal").astype(float) * 0.25
-
-    os_norm = normalize_minmax(summary_df["median_os"])
-    nc_norm = normalize_minmax(summary_df["mean_global_nc_en_ratio"])
-    mgmt_norm = normalize_minmax(summary_df["mgmt_methylated_pct"])
-
-    risk_score = (1.0 - os_norm) + nc_norm + (1.0 - mgmt_norm) + temp_bonus
-    best_idx = int(risk_score.idxmax())
-    best_cluster = int(summary_df.loc[best_idx, "cluster_label"])
-
-    dominant_lobe = str(summary_df.loc[best_idx, "dominant_lobe_mode"]).lower()
-    if dominant_lobe == "temporal":
-        label = "temporally-dominant high-necrosis subtype"
-    else:
-        label = "high-necrosis poor-survival subtype"
-    return best_cluster, label
 
 
 def run_logrank_and_km(

@@ -82,6 +82,7 @@ Key outputs:
 - outputs/step4/<dataset>/<dataset>_test_master_table_step4.csv
 - outputs/step4/<dataset>/<dataset>_train_clustering_features_step4.csv
 - outputs/step4/<dataset>/<dataset>_test_clustering_features_step4.csv
+- outputs/step4/<dataset>/<dataset>_step4_split_membership.csv
 - outputs/step4/<dataset>/<dataset>_train_preprocessing_step4.joblib
 - outputs/step4/<dataset>/<dataset>_train_scaler_step4.joblib
 - outputs/step4/<dataset>/<dataset>_step4_split_metadata.json
@@ -89,6 +90,7 @@ Key outputs:
 Important meaning:
 - This is the core anti-leakage step.
 - No learned preprocessing should come from the full cohort anymore.
+- Step 4 is now also the single owner of the outer split contract because it writes explicit train/test membership.
 
 
 Step 5: Spectral clustering and multi-criteria k selection
@@ -96,23 +98,26 @@ Script:
 - scripts/step5_spectral_clustering.py
 
 Purpose:
-- Run spectral clustering on the Step 4 train feature matrix.
-- Evaluate multiple candidate values of k.
+- Keep the Step 4 test split untouched.
+- Read the Step 4 split membership artifact instead of reconstructing the outer split later.
+- Split the Step 4 train set again internally into an inner-train and inner-validation split.
+- Evaluate multiple candidate values of k only inside that inner split.
 - Choose k using a weighted multi-criteria score rather than silhouette alone.
+- Refit the selected k once on the full Step 4 train feature matrix.
 
 Current k-selection criteria:
 - silhouette score
 - gap statistic
 - train-resample stability using ARI
-- train survival separation
-- holdout survival consistency
+- inner-train survival separation
+- inner-validation survival consistency
 - biological interpretability of the high-risk cluster
 
-Important caveat:
-- In the current Step 5 design, the Step 4 holdout split is used as a model-selection validation proxy.
-- That makes k selection stronger than silhouette-only selection.
-- But that also means Step 7 is no longer a perfectly untouched final test in the strictest publication sense.
-- That is why Step 10 was added later.
+Important meaning:
+- The first clustering step is now nested-safe inside the Step 4 train split.
+- The Step 4 test split is no longer used to decide k.
+- Step 7 is again a true untouched held-out evaluation for the main workflow.
+- Step 5 no longer duplicates Step 4 split logic.
 
 Key outputs:
 - outputs/step5/<dataset>/<dataset>_step5_k_evaluation.csv
@@ -171,6 +176,7 @@ Current test-set validation checks:
 Important note:
 - Step 7 does not recluster the test set.
 - It assigns test patients to the train-derived cluster structure.
+- Because Step 5 now does inner-only k selection, this Step 7 test split is untouched by model selection.
 
 Key outputs:
 - outputs/step7/<dataset>/<dataset>_step7_cluster_summary_test.csv
@@ -186,6 +192,11 @@ Script:
 Purpose:
 - Repeat Steps 4 to 7 across many seeds.
 - Check whether the findings are stable or just the product of one lucky split.
+
+Important meaning:
+- Each Step 8 run now includes the nested-safe Step 5 inner split automatically.
+- So repeated validation is now repeated untouched-test validation of the main pipeline.
+- Step 8 is now a thin wrapper over a shared repeated-evaluation runner instead of maintaining its own orchestration logic.
 
 What it records per run:
 - selected k
@@ -227,29 +238,23 @@ Key outputs:
 - outputs/step9/<dataset>/<dataset>_step9_consensus_heatmap.png
 
 
-Step 10: Nested validation for publication-grade internal evaluation
-Script:
-- scripts/step10_nested_validation.py
+Support modules introduced during refactoring
+Shared cluster metric and validation utilities:
+- scripts/cluster_validation_utils.py
 
-Purpose:
-- Keep an untouched outer test split.
-- Use only an inner split for k selection.
-- Refit on the full outer development set.
-- Evaluate once on the untouched outer test.
+Shared repeated-evaluation orchestration:
+- scripts/repeated_evaluation_runner.py
 
-Why this exists:
-- After Step 5 started using the holdout split for k selection, Step 7 was no longer a pristine final test layer.
-- Step 10 restores a cleaner publication-grade internal validation design.
+Report data computation:
+- scripts/build_project_report_data.py
 
-Current nested structure:
-- outer split = untouched final test
-- inner split = model selection only
-- final evaluation = on untouched outer test
+Report rendering:
+- scripts/render_project_reports.py
 
-Key outputs:
-- results/nested-validation/runs/
-- results/nested-validation/summary/nested_validation_run_metrics.csv
-- results/nested-validation/summary/nested_validation_summary.txt
+Important meaning:
+- The report text files are no longer intended to be hand-maintained.
+- Report computation is separated from report presentation so metrics are derived once and rendered many ways.
+- Step 10 has been retired from the maintained pipeline. Step 8 is now the single repeated-validation entry point.
 
 
 Step 11: Cohort shift analysis between UCSF and UPenn
@@ -285,13 +290,12 @@ Current interpretation of the full pipeline
 1. Step 3 to Step 7 define the main clustering workflow.
 2. Step 8 checks whether that workflow is stable across many random splits.
 3. Step 9 checks whether the discovered train clusters are reproducible.
-4. Step 10 provides a stronger internal nested validation layer for publication.
-5. Step 11 checks whether UCSF and UPenn differ enough that cross-cohort replication should be interpreted carefully.
+4. Step 11 checks whether UCSF and UPenn differ enough that cross-cohort replication should be interpreted carefully.
 
 
 Current practical recommendation
 
 If reporting results for publication:
-- use Step 10 nested validation results as the cleanest internal evaluation
+- use the Step 3 to Step 7 workflow as the main leakage-safe analysis
 - use Step 8 and Step 9 as robustness analyses
 - use Step 11 to justify cohort-aware interpretation, especially for weaker UPenn findings
