@@ -27,7 +27,7 @@ Current default single-split pipeline results after leakage fix
 Current single-split train/test findings
 - UCSF Step 6 train log-rank p = 3.816e-09
 - UCSF Step 7 test log-rank p = 1.08e-06
-- UCSF high-risk cluster = cluster 0
+- UCSF high-risk cluster = cluster 0  
 - UCSF high-risk train/test proportion = 84.57% / 77.48%
 - UCSF high-risk dominant lobe = frontal in train and frontal in test
 - UCSF test high-risk NC/EN rank = 1 among test clusters

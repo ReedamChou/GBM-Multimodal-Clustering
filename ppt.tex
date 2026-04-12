@@ -1,0 +1,211 @@
+% ============================================================
+%  GBM Multimodal Clustering — 3-Slide Technical Presentation
+%  Compile with: pdflatex presentation_slides.tex
+% ============================================================
+\documentclass[aspectratio=169, 10pt]{beamer}
+
+% ---- Theme & Colors ----
+\usetheme{Madrid}
+\usecolortheme{whale}
+\definecolor{DarkTeal}{RGB}{0, 77, 96}
+\definecolor{Highlight}{RGB}{204, 60, 60}
+\definecolor{GoodGreen}{RGB}{34, 139, 34}
+\definecolor{WarnOrange}{RGB}{210, 120, 20}
+\setbeamercolor{frametitle}{bg=DarkTeal, fg=white}
+\setbeamercolor{title}{bg=DarkTeal, fg=white}
+\setbeamercolor{block title}{bg=DarkTeal, fg=white}
+\setbeamercolor{item}{fg=DarkTeal}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\setlist[itemize]{nosep, leftmargin=*, topsep=2pt, itemsep=1pt, parsep=0pt}
+
+\title[GBM Clustering]{\large Multi-Modal Clustering Identifies a High-Risk GBM Subtype}
+\subtitle{Combining Brain MRI Features with Clinical Data}
+\author{GBM Research Team}
+\date{}
+
+\begin{document}
+
+% ============================================================
+% SLIDE 1: Project Overview & Problem Statement
+% ============================================================
+\begin{frame}{\textbf{Project Overview \& Problem Statement}}
+\small
+
+\textbf{The Problem in plain language:}
+\begin{itemize}
+    \item Glioblastoma (GBM) is the \textbf{most aggressive brain cancer} with average survival at roughly 15 months
+    \item Patients are treated similarly, but not all tumours behave the same way so identifying the \textbf{worst subtype} early could help give personalised treatment.
+\end{itemize}
+
+\vspace{0.15cm}
+\textbf{What data do we have?}
+\begin{itemize}
+    \item \textbf{Brain MRI scans} : tumour sub region ratios (necrosis, edema, enhancing core) and dominant brain lobe
+    \item \textbf{Clinical records} : age, genetic markers (MGMT methylation, IDH mutation), survival outcomes
+    \item \textbf{Two independent hospital cohorts:} UCSF (501 patients) and UPenn (611 patients)
+\end{itemize}
+
+\vspace{0.15cm}
+\textbf{Objective:}
+\begin{center}
+\fcolorbox{DarkTeal}{white}{\parbox{0.88\textwidth}{\centering\small
+\textit{Use unsupervised machine learning to discover patient subgroups from combined MRI and clinical features, then validate whether these subgroups have genuinely different survival outcomes.}
+}}
+\end{center}
+
+\end{frame}
+
+% ============================================================
+% SLIDE 2: Methodology
+% ============================================================
+\begin{frame}{\textbf{Methodology}}
+\footnotesize
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+
+\textbf{Step 1: Feature Extraction \& Cleaning}
+\begin{itemize}
+    \item Extract 31 features per patient from MRI and clinical records
+    \item It Includes: tumour sub region ratios, dominant lobe, tumour size, age, genetic markers
+\end{itemize}
+\vspace{0.1cm}
+
+\textbf{Step 2: Anti-Leakage Split (70/30)}
+\begin{itemize}
+    \item Stratified train test split on MGMT status and survival
+    \item Imputation \& scaling learned \textbf{only from training data}
+    \item \textit{prevents data leakage}
+\end{itemize}
+\vspace{0.1cm}
+
+\textbf{Step 3: Spectral Clustering}
+\begin{itemize}
+    \item Group patients by feature similarity; test $k$ (cluster size) for 2-6 clusters
+    \item \textit{Goal is to find natural groupings where patients with similar characteristics are grouped together}
+\end{itemize}
+
+\end{column}
+\begin{column}{0.48\textwidth}
+
+\textbf{Step 4: Nested Model Selection}
+\begin{itemize}
+    \item Best $k$ chosen on an \textbf{inner split} of the training set (unused test set)
+    \item 6 weighted criteria: cluster quality, stability, survival separation, biological coherence
+\end{itemize}
+\vspace{0.1cm}
+
+\textbf{Step 5: Validation}
+\begin{itemize}
+    \item Assign held out test patients to nearest cluster centre
+    \item Check if survival differences \textbf{replicate} on unseen data
+\end{itemize}
+\vspace{0.1cm}
+
+\textbf{Step 6: Repeated Testing}
+\begin{itemize}
+    \item \textbf{Repeated Validation:} re run across 30 random splits
+    \item \textbf{Bootstrap Stability:} re cluster 100 times to confirm reproducibility
+\end{itemize}
+
+\end{column}
+\end{columns}
+
+\end{frame}
+
+% ============================================================
+% SLIDE 3: Results & Interpretation
+% ============================================================
+\begin{frame}{\textbf{Results \& Interpretation}}
+\footnotesize
+
+\begin{columns}[T]
+\begin{column}{0.47\textwidth}
+
+\textbf{UCSF — Strong Validation} \textcolor{GoodGreen}{\textbf{$\checkmark$}}
+
+\vspace{0.08cm}
+{\small
+\begin{tabular}{@{}l r@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Selected $k$ (Cluster Size)       & 2 \\
+Train log-rank $p$                & 4.79\,$\times$\,$10^{-11}$ \\
+\textbf{Test log-rank $p$}        & \textcolor{GoodGreen}{\textbf{1.70\,$\times$\,$10^{-6}$}} \\
+Lobe match on test                & \textcolor{GoodGreen}{Yes (frontal)} \\
+NC/EN rank on test                & \textcolor{GoodGreen}{\#1 of 2} \\
+High-risk: train/test size        & 83\% / 76\%  \\
+\bottomrule
+\end{tabular}
+}
+
+\end{column}
+\begin{column}{0.47\textwidth}
+
+\textbf{UPenn — Partial Replication} \textcolor{WarnOrange}{\textbf{$\sim$}}
+
+\vspace{0.08cm}
+{\small
+\begin{tabular}{@{}l r@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+Selected $k$ (Cluster Size)        & 4 \\
+Train log-rank $p$                 & 0.023 \\
+\textbf{Test log-rank $p$}         & \textcolor{Highlight}{0.20 (n.s.)} \\
+Lobe match on test                 & \textcolor{Highlight}{No (parietal)} \\
+NC/EN rank on test                 & \#2 of 4 \\
+High-risk: train/test size         & 16\% / 14\% \\
+\bottomrule
+\end{tabular}
+}
+
+\end{column}
+\end{columns}
+
+\vspace{0.1cm}
+\begin{center}
+\textbf{Validation (30 random splits):}
+\end{center}
+\vspace{-0.4cm}
+
+\begin{columns}[T]
+\begin{column}{0.47\textwidth}
+\begin{itemize}
+    \item Test survival significant: \textcolor{GoodGreen}{\textbf{30/30}} runs
+    \item Cluster properties stable: \textcolor{GoodGreen}{29/30} runs
+    \item Bootstrap consensus ARI\,=\,\textbf{0.94} {\scriptsize(1.0 = perfect)}
+\end{itemize}
+\end{column}
+\begin{column}{0.47\textwidth}  
+\begin{itemize}
+    \item Test survival significant: \textcolor{WarnOrange}{\textbf{7/30}} runs
+    \item Temporal phenotype replicated: \textcolor{GoodGreen}{\textbf{22/27}} runs
+    \item Bootstrap consensus ARI\,=\,\textbf{0.80}
+\end{itemize}
+\end{column}
+\end{columns}
+
+\vspace{0.1cm}
+\rule{\textwidth}{0.3pt}
+{\footnotesize
+\textbf{Log-rank $p$-value:} tests if clusters have different survival curves; $p < 0.05$ = significant.\;
+\textbf{NC/EN rank:} shows if the high-risk group have the highest necrosis ratio on unseen data\;
+\textbf{ARI:} measures clustering reproducibility; 1.0 = identical, 0 = random.
+}
+
+\vspace{0.08cm}
+\fcolorbox{DarkTeal}{white}{\parbox{0.96\textwidth}{\centering\footnotesize
+\textbf{Takeaway:} UCSF strongly identifies a high necrosis, poor survival GBM subtype validated across all 30 test sets. UPenn replicates the tumour phenotype but not survival separation
+}}
+
+\end{frame}
+
+\end{document}

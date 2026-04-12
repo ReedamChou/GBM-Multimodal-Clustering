@@ -118,7 +118,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--atlas-dir",
         type=Path,
-        default=Path("/tmp/sri24-master/inst/extdata"),
+        default=Path(__file__).parent / "sri24_atlas",
         help="Directory containing SRI24 atlas files such as tzo116plus.nii.gz.",
     )
     parser.add_argument(
