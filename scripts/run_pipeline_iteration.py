@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--datasets", nargs="+", default=["ucsf", "upenn"], choices=["ucsf", "upenn"])
     parser.add_argument("--results-root", type=Path, default=RESULTS_ROOT)
     parser.add_argument("--test-size", type=float, default=0.30)
+    parser.add_argument("--vif-threshold", type=float, default=5.0)
     parser.add_argument("--inner-test-size", type=float, default=0.25)
     parser.add_argument("--k-values", nargs="+", type=int, default=[2, 3, 4, 5, 6])
     parser.add_argument("--n-neighbors", type=int, default=10)
@@ -66,9 +67,12 @@ def main() -> None:
 
     step3_dir = iteration_dir / "step3"
     step4_dir = iteration_dir / "step4"
+    step4b_dir = iteration_dir / "step4b"
     step5_dir = iteration_dir / "step5"
     step6_dir = iteration_dir / "step6"
     step7_dir = iteration_dir / "step7"
+    step5b_dir = iteration_dir / "step5b"
+    step8viz_dir = iteration_dir / "step8"
     repeated_dir = iteration_dir / "repeated-validation"
     step9_dir = iteration_dir / "step9"
     step11_dir = iteration_dir / "step11"
@@ -125,11 +129,31 @@ def main() -> None:
     run_command(
         [
             python_bin,
+            str(PROJECT_ROOT / "scripts" / "step4b_vif_feature_selection.py"),
+            "--datasets",
+            *args.datasets,
+            "--step4-dir",
+            str(step4_dir),
+            "--output-dir",
+            str(step4b_dir),
+            "--vif-threshold",
+            str(args.vif_threshold),
+            "--log-level",
+            args.log_level,
+        ]
+    )
+
+    run_command(
+        [
+            python_bin,
             str(PROJECT_ROOT / "scripts" / "step5_spectral_clustering.py"),
             "--datasets",
             *args.datasets,
             "--step4-dir",
             str(step4_dir),
+            "--step4b-dir",
+            str(step4b_dir),
+            "--prefer-step4b",
             "--output-dir",
             str(step5_dir),
             "--k-values",
@@ -182,6 +206,48 @@ def main() -> None:
             str(step6_dir),
             "--output-dir",
             str(step7_dir),
+            "--log-level",
+            args.log_level,
+        ]
+    )
+
+    run_command(
+        [
+            python_bin,
+            str(PROJECT_ROOT / "scripts" / "step5b_consensus_clustering.py"),
+            "--datasets",
+            *args.datasets,
+            "--step4b-dir",
+            str(step4b_dir),
+            "--step5-dir",
+            str(step5_dir),
+            "--output-dir",
+            str(step5b_dir),
+            "--random-state",
+            str(args.random_state),
+            "--log-level",
+            args.log_level,
+        ]
+    )
+
+    run_command(
+        [
+            python_bin,
+            str(PROJECT_ROOT / "scripts" / "step8_visualizations.py"),
+            "--datasets",
+            *args.datasets,
+            "--step4-dir",
+            str(step4_dir),
+            "--step4b-dir",
+            str(step4b_dir),
+            "--step5-dir",
+            str(step5_dir),
+            "--step6-dir",
+            str(step6_dir),
+            "--step7-dir",
+            str(step7_dir),
+            "--output-dir",
+            str(step8viz_dir),
             "--log-level",
             args.log_level,
         ]

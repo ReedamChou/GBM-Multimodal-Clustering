@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STEP4_DIR = PROJECT_ROOT / "outputs" / "step4"
+DEFAULT_STEP4B_DIR = PROJECT_ROOT / "outputs" / "step4b"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs" / "step5"
 
 
@@ -237,39 +238,54 @@ def load_outer_step4_raw_train_split(
 ) -> tuple[pd.DataFrame, dict, dict]:
     source_master_path = resolve_path(step4_meta["source_master_table"])
     source_step3_metadata_path = resolve_path(step4_meta["source_step3_metadata"])
-    split_membership_path = resolve_path(step4_meta["outputs"]["split_membership"])
+    split_membership_raw = step4_meta.get("outputs", {}).get("split_membership")
+    split_membership_path = resolve_path(split_membership_raw) if split_membership_raw else None
 
     if not source_master_path.exists():
         raise FileNotFoundError(f"Step 3 master table referenced by Step 4 metadata was not found: {source_master_path}")
     if not source_step3_metadata_path.exists():
         raise FileNotFoundError(f"Step 3 metadata referenced by Step 4 metadata was not found: {source_step3_metadata_path}")
-    if not split_membership_path.exists():
-        raise FileNotFoundError(f"Step 4 split membership file was not found: {split_membership_path}")
-
     step3_meta = load_json(source_step3_metadata_path)
     step3_df = pd.read_csv(source_master_path)
     resolved = step3_meta.get("resolved_columns", {})
 
     id_col = step4_meta.get("id_column") or resolved.get("id") or "ID"
-    membership_df = pd.read_csv(split_membership_path)
-    if id_col not in membership_df.columns or "split" not in membership_df.columns:
-        raise ValueError(
-            f"Step 4 split membership file must contain columns '{id_col}' and 'split': {split_membership_path}"
-        )
 
     expected_train = set(expected_train_ids.astype("string").tolist())
     expected_test = set(expected_test_ids.astype("string").tolist())
-    membership_train = set(
-        membership_df.loc[membership_df["split"].astype("string").str.lower() == "train", id_col].astype("string").tolist()
-    )
-    membership_test = set(
-        membership_df.loc[membership_df["split"].astype("string").str.lower() == "test", id_col].astype("string").tolist()
-    )
+    if split_membership_path is not None:
+        if not split_membership_path.exists():
+            raise FileNotFoundError(f"Step 4 split membership file was not found: {split_membership_path}")
 
-    if membership_train != expected_train or membership_test != expected_test:
-        raise RuntimeError(
-            "Step 5 found a mismatch between the Step 4 split membership artifact and the exported "
-            "Step 4 train/test tables; aborting nested-safe k selection because the split contract is inconsistent."
+        membership_df = pd.read_csv(split_membership_path)
+        if id_col not in membership_df.columns or "split" not in membership_df.columns:
+            raise ValueError(
+                f"Step 4 split membership file must contain columns '{id_col}' and 'split': {split_membership_path}"
+            )
+
+        membership_train = set(
+            membership_df.loc[membership_df["split"].astype("string").str.lower() == "train", id_col]
+            .astype("string")
+            .tolist()
+        )
+        membership_test = set(
+            membership_df.loc[membership_df["split"].astype("string").str.lower() == "test", id_col]
+            .astype("string")
+            .tolist()
+        )
+
+        if membership_train != expected_train or membership_test != expected_test:
+            raise RuntimeError(
+                "Step 5 found a mismatch between the Step 4 split membership artifact and the exported "
+                "Step 4 train/test tables; aborting nested-safe k selection because the split contract is inconsistent."
+            )
+
+        logger.info("Recovered Step 4 split membership from explicit artifact: %s", split_membership_path)
+    else:
+        membership_train = expected_train
+        membership_test = expected_test
+        logger.warning(
+            "Step 4 metadata does not include split_membership; using exported train/test tables as split source."
         )
 
     outer_train_raw_df = step3_df[step3_df[id_col].astype("string").isin(membership_train)].copy()
@@ -288,8 +304,9 @@ def load_outer_step4_raw_train_split(
     return outer_train_raw_df.reset_index(drop=True), step3_meta, {
         "source_master_table": str(source_master_path),
         "source_step3_metadata": str(source_step3_metadata_path),
-        "split_membership_file": str(split_membership_path),
-        "verified_against_step4_outputs": True,
+        "split_membership_file": str(split_membership_path) if split_membership_path is not None else None,
+        "verified_against_step4_outputs": split_membership_path is not None,
+        "train_test_source": "explicit_split_membership" if split_membership_path is not None else "exported_step4_train_test_tables",
     }
 
 
@@ -509,7 +526,7 @@ def evaluate_k_values(
                 age_col=analysis_cols_train["age"],
                 lobe_col=analysis_cols_train["dominant_lobe"],
             )
-            high_risk_cluster, high_risk_label = pick_high_risk_cluster(train_summary)
+            high_risk_cluster, high_risk_label, _ = pick_high_risk_cluster(train_summary)
             row["high_risk_cluster"] = int(high_risk_cluster)
             row["high_risk_label"] = high_risk_label
 
@@ -683,6 +700,7 @@ def evaluate_k_values(
 def process_dataset(
     dataset: str,
     step4_dir: Path,
+    step4b_dir: Path,
     output_dir: Path,
     k_values: list[int],
     inner_test_size: float,
@@ -691,6 +709,7 @@ def process_dataset(
     gap_refs: int,
     stability_resamples: int,
     stability_sample_fraction: float,
+    prefer_step4b: bool,
     log_level: str,
 ) -> None:
     dataset_out = output_dir / dataset
@@ -708,6 +727,21 @@ def process_dataset(
     test_features_path = resolve_path(split_meta["outputs"]["test_features"])
     train_master_path = resolve_path(split_meta["outputs"]["train_master"])
     test_master_path = resolve_path(split_meta["outputs"]["test_master"])
+    feature_source = "step4"
+    step4b_meta_path: Path | None = None
+
+    if prefer_step4b:
+        candidate_step4b_meta = step4b_dir / dataset / f"{dataset}_step4b_metadata.json"
+        if candidate_step4b_meta.exists():
+            step4b_meta = load_json(candidate_step4b_meta)
+            feature_cols = step4b_meta.get("selected_feature_columns", feature_cols)
+            train_features_path = resolve_path(step4b_meta["outputs"]["train_features"])
+            test_features_path = resolve_path(step4b_meta["outputs"]["test_features"])
+            step4b_meta_path = candidate_step4b_meta
+            feature_source = "step4b_vif_filtered"
+            logger.info("Using Step 4b VIF-filtered feature files from: %s", candidate_step4b_meta)
+        else:
+            logger.warning("Step 4b metadata not found (%s); falling back to Step 4 features.", candidate_step4b_meta)
 
     logger.info("Reading Step 4 metadata: %s", split_meta_path)
     logger.info("Reading train feature file: %s", train_features_path)
@@ -719,11 +753,11 @@ def process_dataset(
     df_test_master = pd.read_csv(test_master_path)
 
     if id_col not in df_train_features.columns or id_col not in df_test_features.columns:
-        raise ValueError(f"{dataset}: ID column not found in Step 4 feature files: {id_col}")
+        raise ValueError(f"{dataset}: ID column not found in selected Step 4/4b feature files: {id_col}")
 
     available_features = [c for c in feature_cols if c in df_train_features.columns and c in df_test_features.columns]
     if not available_features:
-        raise ValueError(f"{dataset}: no Step 4 feature columns found in Step 4 train/test feature CSVs.")
+        raise ValueError(f"{dataset}: no selected feature columns found in selected Step 4/4b train/test feature CSVs.")
 
     outer_train_raw_df, step3_meta, outer_split_source_meta = load_outer_step4_raw_train_split(
         step4_meta=split_meta,
@@ -791,6 +825,8 @@ def process_dataset(
     selection_meta = {
         "dataset": dataset,
         "step4_metadata": str(split_meta_path),
+        "step4b_metadata": str(step4b_meta_path) if step4b_meta_path is not None else None,
+        "feature_source": feature_source,
         "train_features_file": str(train_features_path),
         "test_features_file": str(test_features_path),
         "id_column": id_col,
@@ -896,6 +932,25 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing Step 4 outputs.",
     )
     parser.add_argument(
+        "--step4b-dir",
+        type=Path,
+        default=DEFAULT_STEP4B_DIR,
+        help="Directory containing optional Step 4b VIF-filtered outputs.",
+    )
+    parser.add_argument(
+        "--prefer-step4b",
+        dest="prefer_step4b",
+        action="store_true",
+        default=True,
+        help="Prefer Step 4b VIF-filtered features when metadata exists (default: true).",
+    )
+    parser.add_argument(
+        "--no-prefer-step4b",
+        dest="prefer_step4b",
+        action="store_false",
+        help="Disable Step 4b feature loading and use Step 4 features only.",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
@@ -962,6 +1017,7 @@ def main() -> None:
         process_dataset(
             dataset=dataset,
             step4_dir=args.step4_dir,
+            step4b_dir=args.step4b_dir,
             output_dir=args.output_dir,
             k_values=args.k_values,
             inner_test_size=args.inner_test_size,
@@ -970,6 +1026,7 @@ def main() -> None:
             gap_refs=args.gap_refs,
             stability_resamples=args.stability_resamples,
             stability_sample_fraction=args.stability_sample_fraction,
+            prefer_step4b=args.prefer_step4b,
             log_level=args.log_level,
         )
 

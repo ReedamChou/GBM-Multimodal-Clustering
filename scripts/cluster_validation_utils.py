@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
+from lifelines import CoxPHFitter
 from lifelines.statistics import multivariate_logrank_test
 
 from pipeline_preprocessing import canonicalize_lobe, first_present_column, safe_mode
+
+logger = logging.getLogger(__name__)
 
 
 def first_present(columns: pd.Index, candidates: list[str]) -> str | None:
@@ -109,22 +114,150 @@ def compute_cluster_summary(
     return pd.DataFrame(records, columns=columns).sort_values("cluster_label").reset_index(drop=True)
 
 
-def pick_high_risk_cluster(summary_df: pd.DataFrame) -> tuple[int, str]:
-    temp_bonus = (summary_df["dominant_lobe_mode"].astype("string").str.lower() == "temporal").astype(float) * 0.25
-    os_norm = normalize_minmax(summary_df["median_os"])
-    nc_norm = normalize_minmax(summary_df["mean_global_nc_en_ratio"])
-    mgmt_norm = normalize_minmax(summary_df["mgmt_methylated_pct"])
+def _pick_high_risk_by_cox(
+    merged_df: pd.DataFrame,
+    cluster_col: str,
+    os_col: str,
+    event_col: pd.Series,
+) -> tuple[int, dict]:
+    """Fit Cox PH on cluster dummies and return the cluster with the
+    highest hazard ratio as the high-risk cluster.
 
-    risk_score = (1.0 - os_norm) + nc_norm + (1.0 - mgmt_norm) + temp_bonus
-    best_idx = int(risk_score.idxmax())
-    best_cluster = int(summary_df.loc[best_idx, "cluster_label"])
-    dominant_lobe = str(summary_df.loc[best_idx, "dominant_lobe_mode"]).lower()
+    Returns (cluster_label, descriptive_label, cox_result_dict).
+    """
+    durations = pd.to_numeric(merged_df[os_col], errors="coerce")
+    valid = durations.notna() & event_col.notna()
+    df_cox = pd.DataFrame({
+        "T": durations[valid].values,
+        "E": event_col[valid].astype(int).values,
+        "cluster": merged_df.loc[valid, cluster_col].astype(int).values,
+    })
 
-    if dominant_lobe == "temporal":
-        label = "temporally-dominant high-necrosis subtype"
-    else:
-        label = "high-necrosis poor-survival subtype"
-    return best_cluster, label
+    if df_cox["cluster"].nunique() < 2:
+        raise ValueError("Need at least 2 clusters for Cox regression.")
+
+    # One-hot encode cluster labels (CoxPH needs dummies, baseline is the
+    # cluster with the best median OS so that all HRs are >= 1).
+    best_os_cluster = int(
+        df_cox.groupby("cluster")["T"].median().idxmax()
+    )
+    dummies = pd.get_dummies(df_cox["cluster"], prefix="cluster", dtype=float)
+    baseline_col = f"cluster_{best_os_cluster}"
+    if baseline_col in dummies.columns:
+        dummies = dummies.drop(columns=[baseline_col])
+
+    cox_input = pd.concat(
+        [df_cox[["T", "E"]].reset_index(drop=True), dummies.reset_index(drop=True)],
+        axis=1,
+    )
+
+    cph = CoxPHFitter(penalizer=0.01)
+    cph.fit(cox_input, duration_col="T", event_col="E")
+
+    # The cluster with the highest hazard ratio is the high-risk group.
+    hr_series = np.exp(cph.params_)
+    dummy_cols = [c for c in hr_series.index if c.startswith("cluster_")]
+    # Include baseline (HR=1.0 by definition).
+    hr_dict = {best_os_cluster: 1.0}
+    for col in dummy_cols:
+        cluster_id = int(col.replace("cluster_", ""))
+        hr_dict[cluster_id] = float(hr_series[col])
+
+    high_risk_cluster = max(hr_dict, key=hr_dict.get)
+
+    # Build a meaningful label from the summary data.
+    cox_results = {
+        "method": "cox_proportional_hazards",
+        "baseline_cluster": best_os_cluster,
+        "hazard_ratios": hr_dict,
+        "p_values": {
+            col: float(cph.summary.loc[col, "p"])
+            for col in dummy_cols
+            if col in cph.summary.index
+        },
+        "concordance_index": float(cph.concordance_index_),
+    }
+
+    return int(high_risk_cluster), cox_results
+
+
+def pick_high_risk_cluster(
+    summary_df: pd.DataFrame,
+    merged_df: pd.DataFrame | None = None,
+    os_col: str | None = None,
+    censor_col: str | None = None,
+    survival_status_col: str | None = None,
+    cluster_col: str = "cluster_label",
+) -> tuple[int, str, float | None]:
+    """Identify the high-risk cluster.
+
+    When *merged_df* and survival columns are provided, uses Cox
+    proportional hazards regression (data-driven).  Otherwise falls
+    back to the cluster with the lowest median OS.
+
+    Returns (cluster_label, descriptive_label, hazard_ratio).
+
+    hazard_ratio is only available when Cox PH succeeds; otherwise None.
+    """
+    # --- Try Cox PH first. ---
+    if merged_df is not None and os_col is not None:
+        events = build_event_observed(merged_df, censor_col, survival_status_col)
+        durations = pd.to_numeric(merged_df[os_col], errors="coerce")
+        valid_count = (durations.notna() & events.notna()).sum()
+
+        if valid_count >= 20 and merged_df[cluster_col].nunique() >= 2:
+            try:
+                high_risk_cluster, cox_results = _pick_high_risk_by_cox(
+                    merged_df=merged_df,
+                    cluster_col=cluster_col,
+                    os_col=os_col,
+                    event_col=events,
+                )
+                hr = cox_results["hazard_ratios"].get(high_risk_cluster, 0)
+                # Get dominant lobe for this cluster from summary.
+                row = summary_df[summary_df["cluster_label"] == high_risk_cluster]
+                if not row.empty:
+                    lobe = str(row.iloc[0].get("dominant_lobe_mode", "unknown")).lower()
+                else:
+                    lobe = "unknown"
+
+                if lobe == "temporal":
+                    label = f"temporally-dominant high-necrosis subtype (HR={hr:.2f})"
+                else:
+                    label = f"high-necrosis poor-survival subtype (HR={hr:.2f})"
+
+                logger.info(
+                    "Cox PH identified high-risk cluster=%d (HR=%.2f, method=cox)",
+                    high_risk_cluster,
+                    hr,
+                )
+                return high_risk_cluster, label, float(hr)
+
+            except Exception as exc:
+                logger.warning("Cox PH failed, falling back to median OS: %s", exc)
+
+    # --- Fallback: cluster with lowest median OS. ---
+    if "median_os" in summary_df.columns:
+        os_vals = pd.to_numeric(summary_df["median_os"], errors="coerce")
+        valid_rows = summary_df[os_vals.notna()]
+        if not valid_rows.empty:
+            best_idx = os_vals[valid_rows.index].idxmin()
+            best_cluster = int(summary_df.loc[best_idx, "cluster_label"])
+            lobe = str(summary_df.loc[best_idx, "dominant_lobe_mode"]).lower()
+
+            if lobe == "temporal":
+                label = "temporally-dominant high-necrosis subtype"
+            else:
+                label = "high-necrosis poor-survival subtype"
+
+            logger.info(
+                "Fallback identified high-risk cluster=%d (method=lowest_median_os)",
+                best_cluster,
+            )
+            return best_cluster, label, None
+
+    # Absolute fallback.
+    return int(summary_df.iloc[0]["cluster_label"]), "uncharacterised high-risk subtype", None
 
 
 def compute_logrank_p(

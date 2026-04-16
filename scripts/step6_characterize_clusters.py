@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from lifelines import KaplanMeierFitter
+from lifelines import CoxPHFitter, KaplanMeierFitter
 from lifelines.statistics import multivariate_logrank_test
 from scipy import stats
 
@@ -15,7 +15,6 @@ from cluster_validation_utils import (
     build_event_observed,
     compute_cluster_summary,
     first_present,
-    normalize_minmax,
     pick_high_risk_cluster,
 )
 from pipeline_preprocessing import canonicalize_lobe
@@ -368,14 +367,26 @@ def process_dataset(
         lobe_col=lobe_col,
     )
 
-    high_risk_cluster, high_risk_label = pick_high_risk_cluster(summary_df)
+    high_risk_cluster, high_risk_label, high_risk_hazard_ratio = pick_high_risk_cluster(
+        summary_df,
+        merged_df=merged,
+        os_col=os_col,
+        censor_col=censor_col,
+        survival_status_col=survival_status_col,
+        cluster_col=cluster_col,
+    )
     summary_df["is_high_risk_cluster"] = summary_df["cluster_label"] == high_risk_cluster
     summary_df["cluster_description"] = np.where(
         summary_df["cluster_label"] == high_risk_cluster,
         high_risk_label,
         "other cluster",
     )
-    logger.info("High-risk cluster identified: cluster=%s label=%s", high_risk_cluster, high_risk_label)
+    logger.info(
+        "High-risk cluster identified: cluster=%s label=%s hazard_ratio=%s",
+        high_risk_cluster,
+        high_risk_label,
+        f"{high_risk_hazard_ratio:.3f}" if high_risk_hazard_ratio is not None else "N/A",
+    )
 
     logrank_stat, logrank_p, km_fig_out = run_logrank_and_km(
         df=merged,
@@ -394,12 +405,105 @@ def process_dataset(
 
     logrank_p_bh, kruskal_df, chi_df, inferential_df = apply_global_bh(logrank_p, kruskal_df, chi_df)
 
+    # --- Multivariate Cox regression: cluster + age + MGMT + IDH. ---
+    cox_univariate_df = pd.DataFrame()
+    cox_multivariate_df = pd.DataFrame()
+    cox_forest_plot_path = None
+    cox_meta: dict = {}
+
+    events = build_event_observed(merged, censor_col, survival_status_col)
+    os_numeric = pd.to_numeric(merged[os_col], errors="coerce") if os_col and os_col in merged.columns else pd.Series(dtype=float)
+    valid_survival = os_numeric.notna() & events.notna()
+
+    if valid_survival.sum() >= 20 and merged[cluster_col].nunique() >= 2:
+        try:
+            # Build Cox input data.
+            cox_df = pd.DataFrame({
+                "T": os_numeric[valid_survival].values,
+                "E": events[valid_survival].astype(int).values,
+                "cluster": merged.loc[valid_survival, cluster_col].astype(int).values,
+            })
+
+            # Add clinical covariates for multivariate analysis.
+            if age_col and age_col in merged.columns:
+                cox_df["age"] = pd.to_numeric(merged.loc[valid_survival, age_col], errors="coerce").fillna(0).values
+            if mgmt_col and mgmt_col in merged.columns:
+                cox_df["mgmt"] = pd.to_numeric(merged.loc[valid_survival, mgmt_col], errors="coerce").fillna(0).values
+            if idh_col and idh_col in merged.columns:
+                cox_df["idh"] = pd.to_numeric(merged.loc[valid_survival, idh_col], errors="coerce").fillna(0).values
+
+            # Use best-OS cluster as baseline.
+            best_os_cluster = int(cox_df.groupby("cluster")["T"].median().idxmax())
+            dummies = pd.get_dummies(cox_df["cluster"], prefix="cluster", dtype=float)
+            baseline_col = f"cluster_{best_os_cluster}"
+            if baseline_col in dummies.columns:
+                dummies = dummies.drop(columns=[baseline_col])
+
+            # Univariate Cox: cluster only.
+            uni_input = pd.concat([cox_df[["T", "E"]].reset_index(drop=True), dummies.reset_index(drop=True)], axis=1)
+            cph_uni = CoxPHFitter(penalizer=0.01)
+            cph_uni.fit(uni_input, duration_col="T", event_col="E")
+            cox_univariate_df = cph_uni.summary.copy()
+            cox_univariate_df["hazard_ratio"] = np.exp(cox_univariate_df["coef"])
+            cox_univariate_df.insert(0, "covariate", cox_univariate_df.index)
+            cox_univariate_df = cox_univariate_df.reset_index(drop=True)
+            logger.info("Univariate Cox concordance=%.4f", cph_uni.concordance_index_)
+
+            # Multivariate Cox: cluster + clinical.
+            clinical_cols = [c for c in ["age", "mgmt", "idh"] if c in cox_df.columns]
+            multi_input = pd.concat(
+                [cox_df[["T", "E"] + clinical_cols].reset_index(drop=True), dummies.reset_index(drop=True)],
+                axis=1,
+            )
+            cph_multi = CoxPHFitter(penalizer=0.01)
+            cph_multi.fit(multi_input, duration_col="T", event_col="E")
+            cox_multivariate_df = cph_multi.summary.copy()
+            cox_multivariate_df["hazard_ratio"] = np.exp(cox_multivariate_df["coef"])
+            cox_multivariate_df.insert(0, "covariate", cox_multivariate_df.index)
+            cox_multivariate_df = cox_multivariate_df.reset_index(drop=True)
+            logger.info("Multivariate Cox concordance=%.4f", cph_multi.concordance_index_)
+
+            # Check if cluster is significant after controlling for confounders.
+            cluster_vars = [c for c in cox_multivariate_df["covariate"] if str(c).startswith("cluster_")]
+            cluster_pvals = cox_multivariate_df.loc[
+                cox_multivariate_df["covariate"].isin(cluster_vars), "p"
+            ]
+            cluster_significant = bool((cluster_pvals < 0.05).any())
+            logger.info(
+                "Cluster independent predictor (multivariate p<0.05 for any cluster dummy): %s",
+                cluster_significant,
+            )
+
+            cox_meta = {
+                "univariate_concordance": float(cph_uni.concordance_index_),
+                "multivariate_concordance": float(cph_multi.concordance_index_),
+                "cluster_independent_predictor_p005": cluster_significant,
+                "baseline_cluster": best_os_cluster,
+            }
+
+            # Forest plot.
+            if plt is not None:
+                cox_forest_plot_path = dataset_out / f"{dataset}_step6_cox_forest_plot.png"
+                fig, ax = plt.subplots(figsize=(8, max(3, len(cph_multi.summary) * 0.5 + 1)))
+                cph_multi.plot(ax=ax, hazard_ratios=True)
+                ax.set_title(f"{dataset.upper()} Multivariate Cox Forest Plot")
+                ax.axvline(x=1.0, color="red", linestyle="--", alpha=0.5)
+                plt.tight_layout()
+                plt.savefig(cox_forest_plot_path, dpi=170)
+                plt.close()
+                logger.info("Saved Cox forest plot: %s", cox_forest_plot_path)
+
+        except Exception:
+            logger.exception("Cox regression failed.")
+
     dataset_out.mkdir(parents=True, exist_ok=True)
     summary_out = dataset_out / f"{dataset}_step6_cluster_summary_train.csv"
     train_labeled_out = dataset_out / f"{dataset}_step6_train_with_clusters.csv"
     kruskal_out = dataset_out / f"{dataset}_step6_kruskal_tests.csv"
     chi_out = dataset_out / f"{dataset}_step6_chi_square_tests.csv"
     inferential_out = dataset_out / f"{dataset}_step6_inferential_tests_bh.csv"
+    cox_uni_out = dataset_out / f"{dataset}_step6_cox_univariate.csv"
+    cox_multi_out = dataset_out / f"{dataset}_step6_cox_multivariate.csv"
     metadata_out = dataset_out / f"{dataset}_step6_metadata.json"
 
     summary_df.to_csv(summary_out, index=False)
@@ -407,6 +511,10 @@ def process_dataset(
     kruskal_df.to_csv(kruskal_out, index=False)
     chi_df.to_csv(chi_out, index=False)
     inferential_df.to_csv(inferential_out, index=False)
+    if not cox_univariate_df.empty:
+        cox_univariate_df.to_csv(cox_uni_out, index=False)
+    if not cox_multivariate_df.empty:
+        cox_multivariate_df.to_csv(cox_multi_out, index=False)
 
     meta = {
         "dataset": dataset,
@@ -431,6 +539,8 @@ def process_dataset(
         "high_risk_cluster": {
             "cluster_label": int(high_risk_cluster),
             "label": high_risk_label,
+            "hazard_ratio": float(high_risk_hazard_ratio) if high_risk_hazard_ratio is not None else None,
+            "selection_method": "cox_highest_hazard_ratio" if high_risk_hazard_ratio is not None else "lowest_median_os_fallback",
         },
         "survival_test": {
             "logrank_statistic": logrank_stat,
@@ -438,12 +548,16 @@ def process_dataset(
             "p_value_bh": logrank_p_bh,
             "km_plot": str(km_fig_out) if km_fig_out is not None else None,
         },
+        "cox_regression": cox_meta,
         "outputs": {
             "cluster_summary": str(summary_out),
             "train_with_clusters": str(train_labeled_out),
             "kruskal_tests": str(kruskal_out),
             "chi_square_tests": str(chi_out),
             "inferential_tests_bh": str(inferential_out),
+            "cox_univariate": str(cox_uni_out),
+            "cox_multivariate": str(cox_multi_out),
+            "cox_forest_plot": str(cox_forest_plot_path) if cox_forest_plot_path is not None else None,
             "log_file": str(dataset_out / "step6.log"),
         },
     }
@@ -454,6 +568,10 @@ def process_dataset(
     logger.info("Saved Kruskal tests: %s", kruskal_out)
     logger.info("Saved chi-square tests: %s", chi_out)
     logger.info("Saved BH-adjusted inferential table: %s", inferential_out)
+    if not cox_univariate_df.empty:
+        logger.info("Saved Cox univariate: %s", cox_uni_out)
+    if not cox_multivariate_df.empty:
+        logger.info("Saved Cox multivariate: %s", cox_multi_out)
     logger.info("Saved metadata: %s", metadata_out)
     logger.info("Step 6 complete for dataset=%s", dataset)
 
