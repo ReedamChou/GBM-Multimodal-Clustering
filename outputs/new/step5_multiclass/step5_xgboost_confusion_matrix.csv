@@ -1,0 +1,5 @@
+,pred_high_risk,pred_low_risk,pred_medium_risk,pred_nan
+true_high_risk,19,52,44,0
+true_low_risk,22,116,64,0
+true_medium_risk,30,70,82,0
+true_nan,0,0,1,0
