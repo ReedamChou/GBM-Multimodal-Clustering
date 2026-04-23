@@ -1,0 +1,4 @@
+cluster_id,risk_group,n_patients,n_imaging_features,matrix_file
+0,high_risk_lt_6m,115,20,ucsf_cluster_0_high_risk_lt_6m_patient_correlation_matrix.csv
+1,mid_risk_6_to_18m,183,20,ucsf_cluster_1_mid_risk_6_to_18m_patient_correlation_matrix.csv
+2,low_risk_gt_18m,202,20,ucsf_cluster_2_low_risk_gt_18m_patient_correlation_matrix.csv

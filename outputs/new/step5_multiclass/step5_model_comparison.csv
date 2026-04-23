@@ -1,0 +1,2 @@
+model,accuracy_mean,accuracy_std,f1_macro_mean,f1_macro_std
+XGBoost,0.434,0.04586937976471885,0.36597955134391796,0.044155690574735805
