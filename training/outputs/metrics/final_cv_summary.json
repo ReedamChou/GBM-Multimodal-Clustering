@@ -1,0 +1,8 @@
+{
+  "balanced_accuracy_mean": 0.4486081365028734,
+  "balanced_accuracy_std": 0.05071169511611211,
+  "quadratic_kappa_mean": 0.2628951550007729,
+  "quadratic_kappa_std": 0.1599494259174654,
+  "macro_f1_mean": 0.444255981185921,
+  "macro_f1_std": 0.053947737193212775
+}

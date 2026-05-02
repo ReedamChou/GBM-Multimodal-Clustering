@@ -49,8 +49,9 @@ def assign_risk_cluster(survival_months: pd.Series) -> tuple[pd.Series, pd.Serie
         survival_months > 18,
     ]
     cluster_ids = np.select(conditions, [0, 1, 2], default=-1)
-    cluster_labels = pd.Series(cluster_ids).map(RISK_CLUSTER_LABELS).fillna("unassigned")
-    return pd.Series(cluster_ids, index=survival_months.index), cluster_labels
+    cluster_ids_series = pd.Series(cluster_ids, index=survival_months.index)
+    cluster_labels = cluster_ids_series.map(RISK_CLUSTER_LABELS).fillna("unassigned")
+    return cluster_ids_series, cluster_labels
 
 
 def main() -> None:
