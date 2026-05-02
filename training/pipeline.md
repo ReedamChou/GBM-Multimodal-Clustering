@@ -292,7 +292,118 @@ This report includes:
 - final test metrics
 - final cross-validation summary
 
-## 14. Run Command
+## 14. How To Interpret The Results
+
+The pipeline produces **three different kinds of model performance numbers**.
+They do **not** mean the same thing.
+
+### 14.1 Validation XGBoost Result
+
+This is the result from the first untuned XGBoost model trained on:
+
+- Train: `350`
+
+and evaluated on:
+
+- Validation: `75`
+
+For the current run:
+
+- Validation balanced accuracy: `0.4307`
+- Validation macro F1: `0.4267`
+
+Purpose:
+
+- quick check before tuning
+- not the final model result
+
+### 14.2 Optuna 5-Fold Cross-Validation Result
+
+This is the score used to choose the best XGBoost hyperparameters.
+
+Data used:
+
+- `train + validation = 425` samples
+
+Method:
+
+- stratified `5-fold` cross-validation
+- `25` Optuna trials
+- scoring metric: balanced accuracy
+
+For the current run:
+
+- Best Optuna CV balanced accuracy: `0.4842`
+
+Purpose:
+
+- model selection
+- hyperparameter tuning
+- not the final held-out test result
+
+### 14.3 Final Held-Out Test Result
+
+After tuning, the model is retrained on:
+
+- `train + validation = 425` samples
+
+and then evaluated once on the untouched:
+
+- Test: `75` samples
+
+This is the **single held-out final evaluation** of the selected model.
+
+For the current run:
+
+- Balanced accuracy: `0.4912`
+- Macro F1: `0.4904`
+- Quadratic kappa: `0.3899`
+- Macro AUC OvR: `0.6471`
+
+This is usually the main answer to:
+
+- “What did the final trained model score on the test set?”
+
+### 14.4 Final 10-Fold Cross-Validation Result
+
+This is a separate robustness estimate of the full modeling approach.
+
+Data used:
+
+- all `500` samples
+
+Method:
+
+- stratified `10-fold` cross-validation
+- refit the tuned XGBoost configuration in each fold
+
+For the current run:
+
+- Balanced accuracy: `0.4486 ± 0.0507`
+- Quadratic kappa: `0.2629 ± 0.1599`
+- Macro F1: `0.4443 ± 0.0539`
+
+Purpose:
+
+- estimate how stable the pipeline is across different splits
+- reduce dependence on one lucky or unlucky test split
+- not the same as the final held-out test result
+
+### 14.5 Which Number Is The Main Final Result?
+
+If someone asks for the **final model test performance**, report:
+
+- Held-out test balanced accuracy: `0.4912`
+
+If someone asks for the **more robust overall estimate of pipeline performance**, report:
+
+- 10-fold CV balanced accuracy: `0.4486 ± 0.0507`
+
+If someone asks for the **tuning score**, report:
+
+- Optuna 5-fold CV balanced accuracy: `0.4842`
+
+## 15. Run Command
 
 To execute the full training workflow:
 
@@ -300,7 +411,7 @@ To execute the full training workflow:
 venv/bin/python training/scripts/run_ucsf_training.py
 ```
 
-## 15. End-To-End Flow Summary
+## 16. End-To-End Flow Summary
 
 ```text
 step3_ucsf_preprocessed_features.csv
@@ -321,13 +432,16 @@ stratified train / validation / test split
 baseline models
     ->
 initial XGBoost validation run
+validation on 75 samples
     ->
 Optuna tuning on train+validation
 25 trials, 5-fold CV, 425 samples
     ->
 fit final XGBoost model
+train on 425 samples
     ->
 test-set evaluation
+evaluate once on 75 samples
     ->
 feature importance + SHAP-style plots
     ->
