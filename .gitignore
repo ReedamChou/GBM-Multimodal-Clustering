@@ -1,7 +1,6 @@
 outputs/old
 venv
 .codex
-training/configs
 training/models
 **/__pycache__
 training/cache

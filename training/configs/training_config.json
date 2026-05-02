@@ -1,0 +1,10 @@
+{
+  "input_csv": "outputs/new/step3_ucsf_preprocessed_features.csv",
+  "random_state": 42,
+  "test_size": 0.15,
+  "validation_fraction_of_trainval": 0.176,
+  "optuna_trials": 25,
+  "optuna_cv_folds": 5,
+  "final_cv_folds": 10,
+  "xgboost_early_stopping_rounds": 30
+}
