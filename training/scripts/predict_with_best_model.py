@@ -5,6 +5,8 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+from sklearn.metrics import balanced_accuracy_score, f1_score, confusion_matrix, classification_report, roc_auc_score, cohen_kappa_score
+
 
 
 TRAINING_ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +30,40 @@ def predict_risk(input_csv: Path) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing required features: {missing}")
     preds = model.predict(df[features])
+    print("print(df.columns)= ", df.columns)
+
+        # Only run if true labels exist
+    if "risk_cluster_label" in df.columns:
+        y_true_str = df["risk_cluster_label"]
+
+        # Convert string labels → numeric (same as training)
+        label_map = {v: k for k, v in inverse_map.items()}  # reverse of inverse_map
+        y_true = y_true_str.map(label_map)
+
+        y_pred = preds
+        y_proba = model.predict_proba(df[features])
+
+        print("\n=== Evaluation Metrics ===")
+        print("Balanced Accuracy:", balanced_accuracy_score(y_true, y_pred))
+        print("Macro F1:", f1_score(y_true, y_pred, average="macro"))
+        print("Quadratic Kappa:", cohen_kappa_score(y_true, y_pred, weights="quadratic"))
+        # ✅ ROC-AUC (multi-class)
+        auc = roc_auc_score(y_true, y_proba, multi_class="ovr", average="macro")
+        print("Macro ROC-AUC (OvR):", auc)
+
+        print("\nConfusion Matrix:")
+        print(confusion_matrix(y_true, y_pred))
+
+        print("\nClassification Report:")
+        print(classification_report(y_true, y_pred))
+
+        print("\nConfusion Matrix:")
+        print(confusion_matrix(y_true, y_pred))
+
+        print("\nClassification Report:")
+        print(classification_report(y_true, y_pred))
+
+        print("\nMacro AUC:", roc_auc_score(y_true, y_proba, multi_class="ovr", average="macro"))
     result = df.copy()
     result["predicted_risk_label"] = [inverse_map[int(pred)] for pred in preds]
     return result

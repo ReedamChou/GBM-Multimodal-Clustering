@@ -6,6 +6,40 @@ import warnings
 from pathlib import Path
 
 import joblib
+import matplotlib.pyplot as plt
+import numpy as np
+import optuna
+import pandas as pd
+import seaborn as sns
+import shap
+import xgboost as xgb
+
+from scipy import stats
+
+from sklearn.ensemble import (
+    GradientBoostingClassifier,
+    RandomForestClassifier,
+)
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    ConfusionMatrixDisplay,
+    balanced_accuracy_score,
+    classification_report,
+    cohen_kappa_score,
+    confusion_matrix,
+    f1_score,
+    roc_auc_score,
+)
+from sklearn.model_selection import (
+    StratifiedKFold,
+    train_test_split,
+)
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import RobustScaler
+from sklearn.svm import SVC
+from sklearn.utils.class_weight import compute_sample_weight
+
 from common import (
     IMAGING_FEATURES,
     LABEL_MAP,
@@ -21,35 +55,12 @@ from common import (
     save_markdown,
     xgb_base_params,
 )
-import matplotlib.pyplot as plt
-import numpy as np
-import optuna
-import pandas as pd
-import seaborn as sns
-import shap
-import xgboost as xgb
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.feature_selection import VarianceThreshold
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    ConfusionMatrixDisplay,
-    balanced_accuracy_score,
-    classification_report,
-    cohen_kappa_score,
-    confusion_matrix,
-    f1_score,
-    make_scorer,
-    roc_auc_score,
-)
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import RobustScaler
-from sklearn.svm import SVC
-from sklearn.utils.class_weight import compute_sample_weight
 
 
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+
+xgb.set_config(verbosity=0)
 
 
 def parse_args() -> argparse.Namespace:
@@ -164,41 +175,70 @@ def run_baselines(
     y_val: pd.Series,
     output_path: Path,
 ) -> pd.DataFrame:
-    vt = VarianceThreshold(threshold=0.0).fit(X_train)
-    scaler = RobustScaler().fit(vt.transform(X_train))
 
-    X_train_scaled = scaler.transform(vt.transform(X_train))
-    X_val_scaled = scaler.transform(vt.transform(X_val))
-
-    baselines = {
-        "LogisticRegression": LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42),
-        "RandomForest": RandomForestClassifier(n_estimators=200, class_weight="balanced", random_state=42),
-        "GradientBoosting": GradientBoostingClassifier(n_estimators=200, random_state=42),
-        "SVM (RBF)": SVC(kernel="rbf", class_weight="balanced", probability=True, random_state=42),
+    scaled_models = {
+        "LogisticRegression": LogisticRegression(
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=42,
+        ),
+        "SVM (RBF)": SVC(
+            kernel="rbf",
+            class_weight="balanced",
+            probability=True,
+            random_state=42,
+        ),
         "KNN": KNeighborsClassifier(n_neighbors=7),
     }
 
-    rows: list[dict[str, object]] = []
-    for name, model in baselines.items():
-        if name in {"LogisticRegression", "SVM (RBF)", "KNN"}:
-            model.fit(X_train_scaled, y_train)
-            preds = model.predict(X_val_scaled)
-        else:
-            model.fit(X_train, y_train)
-            preds = model.predict(X_val)
+    tree_models = {
+        "RandomForest": RandomForestClassifier(
+            n_estimators=200,
+            class_weight="balanced",
+            random_state=42,
+        ),
+        "GradientBoosting": GradientBoostingClassifier(
+            n_estimators=200,
+            random_state=42,
+        ),
+    }
 
-        rows.append(
-            {
-                "model": name,
-                "balanced_accuracy": float(balanced_accuracy_score(y_val, preds)),
-                "macro_f1": float(f1_score(y_val, preds, average="macro")),
-            }
-        )
+    vt = VarianceThreshold()
+    scaler = RobustScaler()
 
-    baseline_df = pd.DataFrame(rows).sort_values(["balanced_accuracy", "macro_f1"], ascending=False)
+    X_train_scaled = scaler.fit_transform(vt.fit_transform(X_train))
+    X_val_scaled = scaler.transform(vt.transform(X_val))
+
+    rows = []
+
+    for name, model in scaled_models.items():
+        model.fit(X_train_scaled, y_train)
+        preds = model.predict(X_val_scaled)
+
+        rows.append({
+            "model": name,
+            "balanced_accuracy": balanced_accuracy_score(y_val, preds),
+            "macro_f1": f1_score(y_val, preds, average="macro"),
+        })
+
+    for name, model in tree_models.items():
+        model.fit(X_train, y_train)
+        preds = model.predict(X_val)
+
+        rows.append({
+            "model": name,
+            "balanced_accuracy": balanced_accuracy_score(y_val, preds),
+            "macro_f1": f1_score(y_val, preds, average="macro"),
+        })
+
+    baseline_df = pd.DataFrame(rows).sort_values(
+        ["balanced_accuracy", "macro_f1"],
+        ascending=False,
+    )
+
     baseline_df.to_csv(output_path, index=False)
-    return baseline_df
 
+    return baseline_df
 
 def fit_validation_xgb(
     X_train: pd.DataFrame,
@@ -219,11 +259,11 @@ def fit_validation_xgb(
         {
             "n_estimators": 500,
             "learning_rate": 0.05,
-            "max_depth": 4,
+            "max_depth": 5,
             "subsample": 0.8,
             "colsample_bytree": 0.8,
-            "min_child_weight": 5,
-            "gamma": 0.1,
+            "min_child_weight": 4,
+            "gamma": 0,
             "reg_alpha": 0.1,
             "reg_lambda": 1.0,
         }
@@ -263,10 +303,10 @@ def tune_xgboost(
             {
                 "n_estimators": trial.suggest_int("n_estimators", 100, 700),
                 "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3, log=True),
-                "max_depth": trial.suggest_int("max_depth", 3, 8),
+                "max_depth": trial.suggest_int("max_depth", 4, 10),
                 "subsample": trial.suggest_float("subsample", 0.5, 1.0),
                 "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-                "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
+                "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
                 "gamma": trial.suggest_float("gamma", 0.0, 5.0),
                 "reg_alpha": trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
                 "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
@@ -290,6 +330,7 @@ def tune_xgboost(
                 verbose=False,
             )
             preds = model.predict(X_va)
+
             score = balanced_accuracy_score(y_va, preds)
             scores.append(score)
             trial.report(float(np.mean(scores)), step=fold_idx)
@@ -297,7 +338,8 @@ def tune_xgboost(
                 raise optuna.TrialPruned()
         return float(np.mean(scores))
 
-    study = optuna.create_study(direction="maximize")
+    sampler = optuna.samplers.TPESampler(seed=random_state)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
 
     trials_df = study.trials_dataframe()
@@ -312,7 +354,6 @@ def fit_best_model(
     best_params: dict[str, object],
     device: str,
     random_state: int,
-    early_stopping_rounds: int,
 ) -> xgb.XGBClassifier:
     params = xgb_base_params(
         device=device,
@@ -334,6 +375,8 @@ def evaluate_model(
     metrics_dir: Path,
 ) -> dict[str, object]:
     y_pred = model.predict(X_test)
+    if len(y_pred.shape) > 1:
+        y_pred = np.argmax(y_pred, axis=1)
     y_proba = model.predict_proba(X_test)
 
     report_dict = classification_report(
@@ -349,7 +392,7 @@ def evaluate_model(
         "balanced_accuracy": float(balanced_accuracy_score(y_test, y_pred)),
         "macro_f1": float(f1_score(y_test, y_pred, average="macro")),
         "quadratic_kappa": float(cohen_kappa_score(y_test, y_pred, weights="quadratic")),
-        "macro_auc_ovr": float(roc_auc_score(y_test, y_proba, multi_class="ovr", average="macro")),
+        "macro_auc_ovr": float(roc_auc_score(y_test, y_proba[:, 1])),
         "confusion_matrix": confusion_matrix(y_test, y_pred).tolist(),
     }
     save_json(metrics, metrics_dir / "test_metrics.json")
@@ -392,14 +435,28 @@ def save_shap_outputs(model: xgb.XGBClassifier, X_test: pd.DataFrame, figures_di
     try:
         contribs = model.get_booster().predict(xgb.DMatrix(X_test), pred_contribs=True)
         if contribs.ndim == 3:
-            high_risk_values = contribs[:, 2, :-1]
+            high_risk_values = contribs[:, 1, :-1]
         elif contribs.ndim == 2:
             n_features_plus_bias = len(IMAGING_FEATURES) + 1
-            n_classes = 3
+            n_classes = 2
             reshaped = contribs.reshape(X_test.shape[0], n_classes, n_features_plus_bias)
-            high_risk_values = reshaped[:, 2, :-1]
+            high_risk_values = reshaped[:, 1, :-1]
         else:
             raise ValueError(f"Unexpected pred_contribs shape: {contribs.shape}")
+        
+        # ---- Compute mean absolute SHAP importance ----
+        shap_importance = np.abs(high_risk_values).mean(axis=0)
+
+        shap_df = pd.DataFrame({
+            "feature": IMAGING_FEATURES,
+            "shap_importance": shap_importance
+        }).sort_values("shap_importance", ascending=False)
+
+        top3_shap = shap_df.head(3)
+
+        print("\n=== Top 3 SHAP Features (High Risk Class) ===")
+        for _, row in top3_shap.iterrows():
+            print(f"{row['feature']} -> {row['shap_importance']:.6f}")
 
         shap.summary_plot(
             high_risk_values,
@@ -424,7 +481,7 @@ def save_shap_outputs(model: xgb.XGBClassifier, X_test: pd.DataFrame, figures_di
         plt.close()
         if error_path.exists():
             error_path.unlink()
-    except Exception as exc:  # pragma: no cover - plotting safety
+    except Exception as exc:
         error_path.write_text(str(exc), encoding="utf-8")
 
 
@@ -446,36 +503,111 @@ def final_cross_validation(
     params.update(best_params)
 
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+    printed_fold = False 
     rows: list[dict[str, float]] = []
     for fold_idx, (train_idx, test_idx) in enumerate(cv.split(X, y), start=1):
         X_tr = X.iloc[train_idx]
         X_te = X.iloc[test_idx]
         y_tr = y.iloc[train_idx]
         y_te = y.iloc[test_idx]
+
+        rf = RandomForestClassifier(n_estimators=100, random_state=42)
+        rf.fit(X_tr, y_tr)
+
+        importances = rf.feature_importances_
+        top_idx = np.argsort(importances)[-30:]
+
+        X_tr = X_tr.iloc[:, top_idx]
+        X_te = X_te.iloc[:, top_idx]
         sample_weights = compute_sample_weight(class_weight="balanced", y=y_tr)
         model = xgb.XGBClassifier(**params)
         model.fit(X_tr, y_tr, sample_weight=sample_weights, verbose=False)
-        preds = model.predict(X_te)
+        proba = model.predict_proba(X_te)
+        preds = np.argmax(proba, axis=1)
+
+
+        if not printed_fold:
+            printed_fold = True
+            inv_map = {v: k for k, v in LABEL_MAP.items()}
+            pred_labels = [inv_map[p] for p in preds[:20]]
+            true_labels = [inv_map[t] for t in y_te.values[:20]]
+            for i, (t, p) in enumerate(zip(true_labels, pred_labels)):
+                match = "✓" if t == p else "✗"
+
+        bal_acc = float(balanced_accuracy_score(y_te, preds))
+        auc = float(roc_auc_score(y_te, proba[:, 1]))
+
+        print(f"Fold {fold_idx} -> AUC: {auc:.4f}")
+        # print("🐸= ", np.bincount(y_te))
+
         rows.append(
             {
                 "fold": fold_idx,
-                "balanced_accuracy": float(balanced_accuracy_score(y_te, preds)),
-                "quadratic_kappa": float(cohen_kappa_score(y_te, preds, weights="quadratic")),
-                "macro_f1": float(f1_score(y_te, preds, average="macro")),
+                "balanced_accuracy": bal_acc,
+                "auc": auc,
             }
         )
 
     cv_df = pd.DataFrame(rows)
     cv_df.to_csv(output_path, index=False)
+    bal_mean = float(cv_df["balanced_accuracy"].mean())
+    auc_mean = float(cv_df["auc"].mean())
+
+    bal_std = float(cv_df["balanced_accuracy"].std())
+    auc_std = float(cv_df["auc"].std())
+    bal_median = float(cv_df["balanced_accuracy"].median())
+
+    n = len(cv_df)
+
+    # ---- 95% Confidence Interval ----
+    bal_ci_low, bal_ci_high = stats.t.interval(
+        0.95, df=n-1,
+        loc=bal_mean,
+        scale=bal_std / np.sqrt(n)
+    )
+
+    auc_ci_low, auc_ci_high = stats.t.interval(
+        0.95, df=n-1,
+        loc=auc_mean,
+        scale=auc_std / np.sqrt(n)
+    )
+
+    # ---- p-value (test > random baseline = 0.5) ----
+    bal_t, bal_p = stats.ttest_1samp(cv_df["balanced_accuracy"], popmean=0.5)
+    auc_t, auc_p = stats.ttest_1samp(cv_df["auc"], popmean=0.5)
+
+    print(f"\nMean AUC               : {auc_mean:.4f} ± {auc_std:.4f}")
+    print(f"95% CI (AUC)           : [{auc_ci_low:.4f}, {auc_ci_high:.4f}]")
+    print(f"p-value (vs 0.5)       : {auc_p:.2e}")
+
     return {
-        "balanced_accuracy_mean": float(cv_df["balanced_accuracy"].mean()),
-        "balanced_accuracy_std": float(cv_df["balanced_accuracy"].std(ddof=0)),
-        "quadratic_kappa_mean": float(cv_df["quadratic_kappa"].mean()),
-        "quadratic_kappa_std": float(cv_df["quadratic_kappa"].std(ddof=0)),
-        "macro_f1_mean": float(cv_df["macro_f1"].mean()),
-        "macro_f1_std": float(cv_df["macro_f1"].std(ddof=0)),
+        "balanced_accuracy_mean": bal_mean,
+        "balanced_accuracy_std": bal_std,
+        "balanced_accuracy_median": bal_median,
+        "balanced_accuracy_ci": [bal_ci_low, bal_ci_high],
+        "balanced_accuracy_p": bal_p,
+        "auc_mean": auc_mean,
+        "auc_std": auc_std,
+        "auc_ci": [auc_ci_low, auc_ci_high],
+        "auc_p": auc_p,
     }
 
+
+def get_feature_summary(X: pd.DataFrame, y: pd.Series) -> dict:
+    return {
+        "n_samples": int(len(X)),
+        "n_features_total": int(X.shape[1]),
+        "feature_names": list(X.columns),
+
+        "class_distribution": y.value_counts().to_dict(),
+
+        "feature_mean": X.mean().to_dict(),
+        "feature_std": X.std().to_dict(),
+
+        "missing_values": int(X.isnull().sum().sum()),
+
+        "correlation_max": float(X.corr().abs().values[np.triu_indices(X.shape[1], 1)].max())
+    }
 
 def save_model_artifacts(model: xgb.XGBClassifier) -> None:
     joblib.dump(model, MODELS_ROOT / "best_xgb_risk_classifier.pkl")
@@ -536,9 +668,8 @@ def build_markdown_report(
 
 ## Final Cross-Validation
 
-- Balanced accuracy: `{cv_summary['balanced_accuracy_mean']:.4f} ± {cv_summary['balanced_accuracy_std']:.4f}`
-- Quadratic kappa: `{cv_summary['quadratic_kappa_mean']:.4f} ± {cv_summary['quadratic_kappa_std']:.4f}`
-- Macro F1: `{cv_summary['macro_f1_mean']:.4f} ± {cv_summary['macro_f1_std']:.4f}`
+- Balanced accuracy: `{cv_summary['balanced_accuracy_mean']:.4f}`
+- AUC: `{cv_summary['auc_mean']:.4f}`
 """
 
 
@@ -546,6 +677,7 @@ def main() -> None:
     args = parse_args()
     paths = ensure_directories()
     config = load_config(args.config)
+
 
     input_csv = Path(str(config["input_csv"]))
     if not input_csv.is_absolute():
@@ -555,6 +687,17 @@ def main() -> None:
     early_stopping_rounds = int(config["xgboost_early_stopping_rounds"])
 
     clean_df, X, y, dataset_summary = load_dataset(input_csv)
+
+    feature_summary = get_feature_summary(X, y)
+    save_json(feature_summary, paths["metrics"] / "feature_summary.json")
+
+    if isinstance(y, pd.DataFrame):
+        y = y.idxmax(axis=1)
+    elif isinstance(y, np.ndarray) and len(y.shape) > 1:
+        y = np.argmax(y, axis=1)
+
+    y = pd.Series(y).astype(int)
+
     save_json(dataset_summary, paths["metrics"] / "dataset_summary.json")
 
     device_summary = detect_xgboost_device(random_state=random_state)
@@ -597,6 +740,8 @@ def main() -> None:
         early_stopping_rounds=early_stopping_rounds,
     )
     val_preds = validation_model.predict(X_val)
+    if len(val_preds.shape) > 1:
+        val_preds = np.argmax(val_preds, axis=1)
     validation_metrics = {
         "balanced_accuracy": float(balanced_accuracy_score(y_val, val_preds)),
         "macro_f1": float(f1_score(y_val, val_preds, average="macro")),
@@ -621,7 +766,6 @@ def main() -> None:
         best_params=best_params,
         device=str(device_summary["selected_device"]),
         random_state=random_state,
-        early_stopping_rounds=early_stopping_rounds,
     )
 
     test_metrics = evaluate_model(
@@ -632,6 +776,7 @@ def main() -> None:
         metrics_dir=paths["metrics"],
     )
     save_feature_importance(best_model, paths["figures"], paths["tables"])
+
     save_shap_outputs(best_model, X_test, paths["figures"], paths["logs"])
 
     cv_summary = final_cross_validation(
@@ -660,11 +805,6 @@ def main() -> None:
         config=config,
     )
     save_markdown(report, paths["reports"] / "training_summary.md")
-
-    print(f"Training complete. Report written: {paths['reports'] / 'training_summary.md'}")
-    print(f"Best Optuna CV balanced accuracy: {study.best_value:.4f}")
-    print(f"Test balanced accuracy: {test_metrics['balanced_accuracy']:.4f}")
-    print(f"Selected device: {device_summary['selected_device']}")
 
 
 if __name__ == "__main__":

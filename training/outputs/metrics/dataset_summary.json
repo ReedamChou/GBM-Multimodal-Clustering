@@ -4,9 +4,8 @@
   "dropped_null_labels": 0,
   "n_features": 17,
   "class_distribution": {
-    "low_risk": 202,
-    "medium_risk": 183,
-    "high_risk": 115
+    "high_risk": 218,
+    "low_risk": 282
   },
   "total_feature_nulls": 0,
   "feature_range_min": 0.0,

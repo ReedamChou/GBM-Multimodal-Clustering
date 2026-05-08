@@ -1,8 +1,17 @@
 {
-  "balanced_accuracy_mean": 0.4486081365028734,
-  "balanced_accuracy_std": 0.05071169511611211,
-  "quadratic_kappa_mean": 0.2628951550007729,
-  "quadratic_kappa_std": 0.1599494259174654,
-  "macro_f1_mean": 0.444255981185921,
-  "macro_f1_std": 0.053947737193212775
+  "balanced_accuracy_mean": 0.5980985968054934,
+  "balanced_accuracy_std": 0.06081116724377041,
+  "balanced_accuracy_median": 0.5914315569487982,
+  "balanced_accuracy_ci": [
+    0.5545969083564503,
+    0.6416002852545365
+  ],
+  "balanced_accuracy_p": 0.000644035519620409,
+  "auc_mean": 0.6516261755485895,
+  "auc_std": 0.05058447065192079,
+  "auc_ci": [
+    0.6154402251319735,
+    0.6878121259652055
+  ],
+  "auc_p": 5.576203633217037e-06
 }

@@ -1,7 +1,7 @@
 {
   "requested_device": "cuda",
-  "selected_device": "cpu",
-  "gpu_available": false,
-  "reason": "nvidia-smi could not communicate with the NVIDIA driver.",
-  "stderr": ""
+  "selected_device": "cuda",
+  "gpu_available": true,
+  "reason": "XGBoost CUDA probe succeeded.",
+  "warnings": []
 }

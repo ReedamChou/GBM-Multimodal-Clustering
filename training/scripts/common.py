@@ -23,6 +23,8 @@ os.environ.setdefault("MPLCONFIGDIR", str(MPL_CACHE_ROOT))
 
 INPUT_DEFAULT = PROJECT_ROOT / "outputs" / "new" / "step3_ucsf_preprocessed_features.csv"
 
+print("INPUT_DEFAULT= ", INPUT_DEFAULT)
+
 IMAGING_FEATURES = [
     "global_nc_en_ratio",
     "global_ed_en_ratio",
@@ -43,9 +45,11 @@ IMAGING_FEATURES = [
     "dominant_brain_lobe_temporal",
 ]
 TARGET = "risk_cluster_label"
-LABEL_MAP = {"low_risk": 0, "medium_risk": 1, "high_risk": 2}
-LABEL_NAMES = ["low_risk", "medium_risk", "high_risk"]
-
+LABEL_MAP = {
+    "high_risk": 0,
+    "low_risk": 1,
+}
+LABEL_NAMES = ["high_risk", "low_risk"]
 
 def ensure_directories() -> dict[str, Path]:
     paths = {

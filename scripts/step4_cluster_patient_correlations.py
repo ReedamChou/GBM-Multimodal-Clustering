@@ -14,8 +14,7 @@ PATIENT_ID_ALIASES = ["patient_id", "case_id", "PatientID", "ID", "id", "case_id
 METADATA_COLUMNS = {"case_id", "patient_id", "OS", "os", "overall_survival", "survival", "survival_days", "survival_months", "risk_cluster_id", "risk_cluster_label"}
 RISK_CLUSTER_LABELS = {
     0: "high_risk",
-    1: "medium_risk",
-    2: "low_risk",
+    1: "low_risk",
 }
 
 
@@ -60,6 +59,7 @@ def main() -> None:
         raise FileNotFoundError(f"Input CSV not found: {args.input_csv}")
 
     df = pd.read_csv(args.input_csv)
+    print(df["risk_cluster_id"].value_counts())
     patient_id_column = resolve_patient_id_column(df.columns)
     feature_columns = get_imaging_feature_columns(df)
 
