@@ -1,0 +1,34 @@
+{
+  "data": {
+    "ucsf_root": "UCSF",
+    "structural_subdir": "DATA-IMAGE-STRUCTURAL",
+    "segmentation_subdir": "DATA-AUTOMATED-SEGMENT",
+    "t1_suffix": "_T1.nii.gz",
+    "seg_suffix": "_tumor_segmentation.nii.gz",
+    "clinical_csv": "data/raw/ucsf_with_clinical.csv",
+    "sri24_dir": "data/SRI24",
+    "sri24_t1_filename": "T1.nii.gz"
+  },
+  "atlas": {
+    "lobe_dilation_voxels": 3,
+    "cache_atlas": true,
+    "registration_type": "Affine",
+    "transforms_cache_dir": "outputs/transforms",
+    "use_ants_registration": true
+  },
+  "preprocessing": {
+    "os_high_risk_threshold_months": 12,
+    "os_days_per_month": 30.4375,
+    "min_lobe_mapping_fraction": 0.90
+  },
+  "training": {
+    "cv_folds": 10,
+    "random_seed": 42,
+    "tree_selector_threshold": "mean",
+    "xgb_n_estimators": 200,
+    "xgb_max_depth": 4,
+    "xgb_learning_rate": 0.05,
+    "xgb_subsample": 0.8,
+    "xgb_colsample_bytree": 0.8
+  }
+}

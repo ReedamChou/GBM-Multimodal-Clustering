@@ -1,7 +1,0 @@
-{
-  "requested_device": "cuda",
-  "selected_device": "cuda",
-  "gpu_available": true,
-  "reason": "XGBoost CUDA probe succeeded.",
-  "warnings": []
-}
