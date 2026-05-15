@@ -103,14 +103,16 @@ def _nib_to_ants(nib_img: nib.Nifti1Image):
     spacing = tuple(float(np.linalg.norm(affine[:3, i])) for i in range(3))
 
     # Extract origin
-    origin = tuple(float(x) for x in affine[:3, 3])
+    ras2lps = np.diag([-1.0, -1.0, 1.0])
+    origin = tuple(float(x) for x in (ras2lps @ affine[:3, 3]))
 
     # Extract direction cosines (unit column vectors)
     direction = np.zeros((3, 3), dtype=np.float64)
     for i in range(3):
         col = affine[:3, i]
         norm = np.linalg.norm(col)
-        direction[:, i] = col / norm if norm > 0 else col
+        col = ras2lps @ col
+        direction[i, :] = col / norm if norm > 0 else col
 
     return ants.from_numpy(
         data,

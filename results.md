@@ -1,36 +1,35 @@
-# GBM Survival Risk Stratification - Results (Run 2)
+# GBM Survival Risk Stratification - Results (Run 3)
 
-Date: 15 May 2026
+Date: 16 May 2026
 
 ## 1. Data Summary
 
 - Input: outputs/features_processed.csv
-- Samples: 367
-- Positives (risk_label=1): 165
-- Negatives (risk_label=0): 202
+- Samples: 493
+- Positives (risk_label=1): 217
+- Negatives (risk_label=0): 276
 - Feature set: 16 radiomic features
 
 ## 2. Holdout Performance (Train/Val/Test)
 
-- Validation balanced accuracy: 0.4800
-- Validation macro F1: 0.4720
-- Test balanced accuracy: 0.4781
-- Test macro F1: 0.4780
-- Test AUC: 0.5884
+- Validation balanced accuracy: 0.5714
+- Validation macro F1: 0.5716
+- Test balanced accuracy: 0.6438
+- Test macro F1: 0.6146
+- Test AUC: 0.7103
 
 ## 3. Final Cross-Validation Performance
 
 - CV: Stratified 10-fold
-- Mean AUC: 0.6033
-- 95% CI (t-interval): [0.5369, 0.6698]
-- One-sided p-value vs AUC=0.5: 0.00327774
+- Mean AUC: 0.6432
+- 95% CI (t-interval): [0.5441, 0.7423]
+- One-sided p-value vs AUC=0.5: 0.00485937
 
 ## 4. Interpretation vs Abstract Target
 
-The observed mean AUC (0.6033) is closer to the abstract target of
-~0.652 and is statistically significant above chance at the 0.05 level.
-The gap suggests remaining factors (registration quality or cohort
-differences) may still limit performance.
+The observed mean AUC (0.6432) is close to the abstract target of ~0.652
+and is statistically significant above chance at the 0.05 level.
+Remaining gap may reflect registration quality or cohort differences.
 
 ## 5. Artifacts Produced
 
