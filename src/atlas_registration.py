@@ -288,13 +288,15 @@ def load_clinical_os(csv_path: Path, days_per_month: float) -> dict[str, float]:
     """Read clinical CSV → {patient_id: OS_months}."""
     import pandas as pd
     df = pd.read_csv(csv_path)
-    assert "patient_id" in df.columns, (
-        f"Expected 'patient_id' column in {csv_path}, "
+    # Support both 'ID' and 'patient_id' column names
+    id_col = "ID" if "ID" in df.columns else "patient_id"
+    assert id_col in df.columns, (
+        f"Expected 'ID' or 'patient_id' column in {csv_path}, "
         f"got: {list(df.columns)}")
     assert "OS" in df.columns, f"Expected 'OS' column in {csv_path}"
     os_map: dict[str, float] = {}
     for _, r in df.iterrows():
-        pid = str(r["patient_id"]).strip()
+        pid = str(r[id_col]).strip()
         os_val = r["OS"]
         if pd.isna(os_val):
             os_map[pid] = float("nan")
@@ -312,8 +314,8 @@ def main() -> int:
                         help="List discovered patients without processing.")
     args = parser.parse_args()
 
-    root = args.config.parent
-    cfg = _load_config(args.config)
+    root = args.config.resolve().parent
+    cfg = _load_config(args.config.resolve())
 
     # Load clinical OS
     csv_path = root / cfg["data"]["clinical_csv"]

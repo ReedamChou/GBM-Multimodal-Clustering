@@ -1,4 +1,4 @@
-antspy
+# Core dependencies (all platforms)
 nibabel
 scipy
 numpy
@@ -7,3 +7,10 @@ scikit-learn
 xgboost
 shap
 matplotlib
+optuna
+seaborn
+joblib
+
+# ANTs registration (Linux/macOS only — not available on Windows PyPI)
+# Install manually: pip install antspy  (or use WSL on Windows)
+# If unavailable, set atlas.use_ants_registration=false in config.json
