@@ -3,8 +3,8 @@
 risk stratification.
 
 Builds a 4-lobe atlas from SRI24 parcellation, registers it to each
-patient's native T1 space via ANTs (or affine fallback), then extracts
-exactly 16 radiomic features per patient.
+patient's native T1 space via ANTs (or affine fallback on Windows),
+then extracts exactly 16 radiomic features per patient.
 
 Usage:
     python src/atlas_registration.py                            # full batch
@@ -17,8 +17,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import platform
 import re
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 import nibabel as nib
@@ -49,6 +52,8 @@ assert len(FEATURE_COLS) == 16
 
 OUTPUT_COLS = ["patient_id", *FEATURE_COLS, "OS_months", "lobe_assignment_reliable"]
 
+IS_WINDOWS = platform.system() == "Windows"
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 def _sdiv(num: float, den: float) -> float:
@@ -72,6 +77,60 @@ def _load_config(path: Path) -> dict:
         return json.load(f)
 
 
+def _nib_to_ants(nib_img: nib.Nifti1Image):
+    """
+    Convert a nibabel NIfTI image to an ANTsPy image.
+    Works with both old and new antspyx APIs.
+    
+    Modern antspyx removed ants.from_nibabel().
+    This function handles both old and new versions gracefully.
+    """
+    import ants  # type: ignore
+
+    # Try modern API first (antspyx >= 0.3.x)
+    if hasattr(ants, "from_nibabel"):
+        # Old API still present — use it directly
+        return ants.from_nibabel(nib_img)
+
+    # Modern API: convert manually via numpy + affine decomposition
+    data = np.asarray(nib_img.dataobj, dtype=np.float32)
+    if data.ndim == 4 and data.shape[-1] == 1:
+        data = data[..., 0]
+
+    affine = nib_img.affine
+
+    # Extract spacing (voxel sizes) from affine
+    spacing = tuple(float(np.linalg.norm(affine[:3, i])) for i in range(3))
+
+    # Extract origin
+    origin = tuple(float(x) for x in affine[:3, 3])
+
+    # Extract direction cosines (unit column vectors)
+    direction = np.zeros((3, 3), dtype=np.float64)
+    for i in range(3):
+        col = affine[:3, i]
+        norm = np.linalg.norm(col)
+        direction[:, i] = col / norm if norm > 0 else col
+
+    return ants.from_numpy(
+        data,
+        origin=origin,
+        spacing=spacing,
+        direction=direction,
+    )
+
+
+def _ants_to_numpy(ants_img) -> np.ndarray:
+    """Extract numpy array from ANTsPy image (API-agnostic)."""
+    if hasattr(ants_img, "numpy"):
+        return ants_img.numpy()
+    elif hasattr(ants_img, "view"):
+        return np.array(ants_img.view())
+    else:
+        raise RuntimeError("Cannot extract numpy array from ANTsPy image. "
+                           "Check antspyx version.")
+
+
 # ── Section A: Build 4-lobe atlas (run once, cached) ─────────────────────
 def _parse_tzo_labels(label_file: Path) -> dict[int, str]:
     out: dict[int, str] = {}
@@ -80,7 +139,10 @@ def _parse_tzo_labels(label_file: Path) -> dict[int, str]:
         if not line:
             continue
         parts = re.split(r"\s+", line)
-        out[int(parts[0])] = parts[1]
+        try:
+            out[int(parts[0])] = parts[1]
+        except (ValueError, IndexError):
+            continue
     return out
 
 
@@ -98,8 +160,9 @@ def _build_seeds(tzo: np.ndarray, label_map: dict[int, str]) -> np.ndarray:
     return seeds
 
 
-def build_4lobe_atlas(sri24_dir: Path, dilation: int,
-                      out_path: Path) -> tuple[nib.Nifti1Image, np.ndarray]:
+def build_4lobe_atlas(
+    sri24_dir: Path, dilation: int, out_path: Path
+) -> tuple[nib.Nifti1Image, np.ndarray]:
     """Build or load the filled 4-lobe atlas in SRI24 space."""
     if out_path.exists():
         print(f"  Cached atlas: {out_path}")
@@ -114,8 +177,7 @@ def build_4lobe_atlas(sri24_dir: Path, dilation: int,
 
     tzo_img, tzo_data = _load_vol(tzo_path)
     _, sup_data = _load_vol(sup_path)
-    seeds = _build_seeds(tzo_data.astype(np.int32),
-                         _parse_tzo_labels(lbl_path))
+    seeds = _build_seeds(tzo_data.astype(np.int32), _parse_tzo_labels(lbl_path))
 
     mask = sup_data > 0
     if dilation > 0:
@@ -134,15 +196,15 @@ def build_4lobe_atlas(sri24_dir: Path, dilation: int,
     return atlas_img, filled
 
 
-# ── Section B: Register atlas -> patient T1 ──────────────────────────────
-def _affine_resample_nn(src_img: nib.Nifti1Image,
-                        tgt_img: nib.Nifti1Image) -> np.ndarray:
-    """Nearest-neighbor resample via NIfTI affines (fallback path)."""
+# ── Section B: Registration ───────────────────────────────────────────────
+def _affine_resample_nn(
+    src_img: nib.Nifti1Image, tgt_img: nib.Nifti1Image
+) -> np.ndarray:
+    """Nearest-neighbor resample via NIfTI affines (Windows fallback)."""
     tgt_shape = tgt_img.shape[:3]
     coords = np.indices(tgt_shape, dtype=np.int32).reshape(3, -1).T
     world = nib.affines.apply_affine(tgt_img.affine, coords)
-    src_ijk = nib.affines.apply_affine(
-        np.linalg.inv(src_img.affine), world)
+    src_ijk = nib.affines.apply_affine(np.linalg.inv(src_img.affine), world)
     si = np.rint(src_ijk).astype(np.int32)
     ss = np.array(src_img.shape[:3])
     valid = np.all((si >= 0) & (si < ss), axis=1)
@@ -155,76 +217,172 @@ def _affine_resample_nn(src_img: nib.Nifti1Image,
     return out.reshape(tgt_shape)
 
 
-def _ants_register(patient_t1: Path, sri24_t1: Path,
-                   atlas_img: nib.Nifti1Image,
-                   brainmask_img: nib.Nifti1Image,
-                   tx_dir: Path, reg_type: str,
-                   ) -> tuple[np.ndarray, np.ndarray]:
-    """ANTs registration: SRI24 -> patient T1, apply to atlas + brainmask."""
+def _ants_register(
+    patient_t1: Path,
+    sri24_t1: Path,
+    atlas_img: nib.Nifti1Image,
+    brainmask_img: nib.Nifti1Image,
+    tx_dir: Path,
+    reg_type: str,
+    cached_affine_ids: set[str],
+    cached_syn_ids: set[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    ANTs registration: SRI24 T1 -> patient T1.
+    Applies same transform to atlas (label vol) and brainmask.
+    Uses modern antspyx API — no ants.from_nibabel().
+    """
     import ants  # type: ignore
 
     fixed = ants.image_read(str(patient_t1))
     moving = ants.image_read(str(sri24_t1))
-    tx_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check for cached transform
-    cached_tx = tx_dir / "0GenericAffine.mat"
-    if cached_tx.exists():
-        tx_list = [str(cached_tx)]
+    # Flat prefix cache: outputs/transforms/UCSF-PDGM-01020GenericAffine.mat
+    prefix = tx_dir.name    # patient ID
+    flat_dir = tx_dir.parent  # outputs/transforms/
+    affine_mat = flat_dir / f"{prefix}0GenericAffine.mat"
+    warp_field = flat_dir / f"{prefix}1Warp.nii.gz"
+
+    if reg_type == "SyN" and prefix in cached_syn_ids:
+        tx_list = [str(warp_field), str(affine_mat)]
+        print("    [CACHE] Reusing SyN transforms")
+    elif reg_type != "SyN" and prefix in cached_affine_ids:
+        tx_list = [str(affine_mat)]
+        print("    [CACHE] Reusing Affine transform")
     else:
-        reg = ants.registration(fixed=fixed, moving=moving,
-                                type_of_transform=reg_type)
-        # Cache the forward transforms
-        for src in reg["fwdtransforms"]:
-            dst = tx_dir / Path(src).name
-            if not dst.exists():
-                import shutil
-                shutil.copy2(src, dst)
-        tx_list = [str(tx_dir / Path(t).name) for t in reg["fwdtransforms"]]
+        print(f"    [ANTs] Running {reg_type} registration ...", end=" ", flush=True)
+        flat_dir.mkdir(parents=True, exist_ok=True)
+        reg = ants.registration(
+            fixed=fixed,
+            moving=moving,
+            type_of_transform=reg_type,
+            outprefix=str(flat_dir / prefix),
+        )
+        tx_list = reg["fwdtransforms"]
+        print("done")
+        if reg_type == "SyN":
+            cached_affine_ids.add(prefix)
+            cached_syn_ids.add(prefix)
+        else:
+            cached_affine_ids.add(prefix)
 
-    # Apply to atlas (label volume -> nearest neighbor)
-    a_ants = ants.from_nibabel(atlas_img)
+    # Convert nibabel images to ANTsPy (modern API-safe)
+    a_ants = _nib_to_ants(atlas_img)
+    bm_ants = _nib_to_ants(brainmask_img)
+
+    # Apply transform to atlas — MUST use nearestNeighbor (label volume)
     reg_atlas = ants.apply_transforms(
-        fixed=fixed, moving=a_ants,
-        transformlist=tx_list, interpolator="nearestNeighbor")
+        fixed=fixed,
+        moving=a_ants,
+        transformlist=tx_list,
+        interpolator="nearestNeighbor",
+    )
 
-    # Apply to brainmask
-    bm_ants = ants.from_nibabel(brainmask_img)
+    # Apply transform to brainmask — also nearest neighbor
     reg_bm = ants.apply_transforms(
-        fixed=fixed, moving=bm_ants,
-        transformlist=tx_list, interpolator="nearestNeighbor")
+        fixed=fixed,
+        moving=bm_ants,
+        transformlist=tx_list,
+        interpolator="nearestNeighbor",
+    )
 
-    return reg_atlas.numpy(), reg_bm.numpy()
+    return _ants_to_numpy(reg_atlas), _ants_to_numpy(reg_bm)
 
 
-def register_atlas(patient_t1: Path, seg_img: nib.Nifti1Image,
-                   atlas_img: nib.Nifti1Image,
-                   brainmask_img: nib.Nifti1Image,
-                   cfg: dict, patient_id: str,
-                   ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (registered_atlas, registered_brainmask) in patient space."""
-    if cfg["atlas"].get("use_ants_registration", True):
-        sri24_dir = Path(cfg["data"]["sri24_dir"])
-        sri24_t1 = sri24_dir / cfg["data"].get("sri24_t1_filename", "T1.nii.gz")
-        if not sri24_t1.exists():
-            raise FileNotFoundError(
-                f"SRI24 T1 template not found: {sri24_t1}. "
-                "Check sri24_t1_filename in config.json.")
-        tx_dir = Path(cfg["atlas"]["transforms_cache_dir"]) / patient_id
-        return _ants_register(patient_t1, sri24_t1,
-                              atlas_img, brainmask_img,
-                              tx_dir, cfg["atlas"]["registration_type"])
-    else:
-        print(f"    [WARN] Affine fallback (no ANTs registration)")
-        ra = _affine_resample_nn(atlas_img, seg_img)
-        rb = _affine_resample_nn(brainmask_img, seg_img)
-        return ra, rb
+def _ants_available() -> bool:
+    """Check if antspyx is importable."""
+    try:
+        import ants  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _scan_transform_cache(cache_dir: Path) -> tuple[set[str], set[str]]:
+    """Scan transform cache once and return (affine_ids, syn_ids)."""
+    if not cache_dir.exists():
+        return set(), set()
+
+    affine_ids: set[str] = set()
+    warp_ids: set[str] = set()
+
+    affine_suffix = "0GenericAffine.mat"
+    warp_suffix = "1Warp.nii.gz"
+
+    for p in cache_dir.rglob("*"):
+        if not p.is_file():
+            continue
+        name = p.name
+        if name.endswith(affine_suffix):
+            affine_ids.add(name[: -len(affine_suffix)])
+        elif name.endswith(warp_suffix):
+            warp_ids.add(name[: -len(warp_suffix)])
+
+    syn_ids = affine_ids & warp_ids
+    return affine_ids, syn_ids
+
+
+def register_atlas(
+    patient_t1: Path,
+    seg_img: nib.Nifti1Image,
+    atlas_img: nib.Nifti1Image,
+    brainmask_img: nib.Nifti1Image,
+    cfg: dict,
+    patient_id: str,
+    cached_affine_ids: set[str] | None = None,
+    cached_syn_ids: set[str] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return (registered_atlas, registered_brainmask) in patient space.
+
+    Priority:
+    1. ANTs (if use_ants_registration=true AND antspyx importable)
+    2. Affine fallback (always works, Windows-safe)
+    """
+    use_ants = cfg["atlas"].get("use_ants_registration", True)
+    if cached_affine_ids is None:
+        cached_affine_ids = set()
+    if cached_syn_ids is None:
+        cached_syn_ids = set()
+
+    if use_ants:
+        if IS_WINDOWS:
+            print("    [WARN] Windows detected — antspyx unavailable, "
+                  "using affine fallback. Run on Linux/WSL for ANTs.")
+        elif not _ants_available():
+            print("    [WARN] antspyx not installed — using affine fallback. "
+                  "Install with: pip install antspyx")
+        else:
+            sri24_dir = Path(cfg["data"]["sri24_dir"])
+            sri24_t1 = sri24_dir / cfg["data"].get("sri24_t1_filename", "T1.nii.gz")
+            if not sri24_t1.exists():
+                raise FileNotFoundError(
+                    f"SRI24 T1 template not found: {sri24_t1}\n"
+                    "Set 'sri24_t1_filename' in config.json to the correct filename."
+                )
+            tx_dir = Path(cfg["atlas"]["transforms_cache_dir"]) / patient_id
+            return _ants_register(
+                patient_t1, sri24_t1,
+                atlas_img, brainmask_img,
+                tx_dir, cfg["atlas"]["registration_type"],
+                cached_affine_ids, cached_syn_ids,
+            )
+
+    # Affine fallback path
+    print("    [WARN] Affine fallback (no ANTs registration)")
+    ra = _affine_resample_nn(atlas_img, seg_img)
+    rb = _affine_resample_nn(brainmask_img, seg_img)
+    return ra, rb
 
 
 # ── Section C: Extract 16 features ───────────────────────────────────────
-def extract_features(seg_data: np.ndarray, atlas_data: np.ndarray,
-                     brainmask: np.ndarray, patient_id: str,
-                     os_months: float) -> dict:
+def extract_features(
+    seg_data: np.ndarray,
+    atlas_data: np.ndarray,
+    brainmask: np.ndarray,
+    patient_id: str,
+    os_months: float,
+) -> dict:
     """Compute exactly 16 features + metadata for one patient."""
     seg = seg_data.astype(np.uint8)
     nc_total = int(np.sum(seg == NC_LABEL))
@@ -236,12 +394,13 @@ def extract_features(seg_data: np.ndarray, atlas_data: np.ndarray,
     row: dict = {"patient_id": patient_id}
 
     # Global features (4)
-    row["global_nc_en_ratio"] = _sdiv(nc_total, en_total)
-    row["global_ed_en_ratio"] = _sdiv(ed_total, en_total)
+    row["global_nc_en_ratio"]   = _sdiv(nc_total, en_total)
+    row["global_ed_en_ratio"]   = _sdiv(ed_total, en_total)
     row["global_ed_total_ratio"] = _sdiv(ed_total, wt_total)
-    row["tumor_burden_index"] = _sdiv(wt_total, brain_vox)
+    row["tumor_burden_index"]   = _sdiv(wt_total, brain_vox)
 
-    # Lobe-wise features (12): denominator = total lobe voxels (Option B)
+    # Lobe-wise features (12)
+    # Denominator = total lobe voxels (lobe invasion fraction per abstract)
     tumor_mask = seg > 0
     mapped_vox = 0
     for lobe_name, lobe_id in LOBE_IDS.items():
@@ -256,8 +415,8 @@ def extract_features(seg_data: np.ndarray, atlas_data: np.ndarray,
         row[f"{lobe_name}_en_ratio"] = _sdiv(en_in, lobe_total)
         row[f"{lobe_name}_nc_ratio"] = _sdiv(nc_in, lobe_total)
 
-    # QA column
-    reliable = _sdiv(mapped_vox, wt_total) >= 0.90 if wt_total > 0 else False
+    # QA
+    reliable = (_sdiv(mapped_vox, wt_total) >= 0.90) if wt_total > 0 else False
     row["OS_months"] = os_months
     row["lobe_assignment_reliable"] = reliable
     return row
@@ -267,16 +426,16 @@ def extract_features(seg_data: np.ndarray, atlas_data: np.ndarray,
 def discover_patients(cfg: dict, root: Path) -> list[dict]:
     """Find patients with both T1 and segmentation files."""
     struct_dir = root / cfg["data"]["ucsf_root"] / cfg["data"]["structural_subdir"]
-    seg_dir = root / cfg["data"]["ucsf_root"] / cfg["data"]["segmentation_subdir"]
-    t1_sfx = cfg["data"]["t1_suffix"]
-    seg_sfx = cfg["data"]["seg_suffix"]
+    seg_dir    = root / cfg["data"]["ucsf_root"] / cfg["data"]["segmentation_subdir"]
+    t1_sfx     = cfg["data"]["t1_suffix"]
+    seg_sfx    = cfg["data"]["seg_suffix"]
 
     patients = []
     for d in sorted(struct_dir.iterdir()):
         if not d.is_dir() or d.name.startswith("."):
             continue
         pid = d.name
-        t1 = d / f"{pid}{t1_sfx}"
+        t1  = d / f"{pid}{t1_sfx}"
         seg = seg_dir / f"{pid}{seg_sfx}"
         if not t1.exists() or not seg.exists():
             continue
@@ -285,15 +444,17 @@ def discover_patients(cfg: dict, root: Path) -> list[dict]:
 
 
 def load_clinical_os(csv_path: Path, days_per_month: float) -> dict[str, float]:
-    """Read clinical CSV → {patient_id: OS_months}."""
+    """Read clinical CSV -> {patient_id: OS_months}."""
     import pandas as pd
     df = pd.read_csv(csv_path)
-    # Support both 'ID' and 'patient_id' column names
     id_col = "ID" if "ID" in df.columns else "patient_id"
-    assert id_col in df.columns, (
-        f"Expected 'ID' or 'patient_id' column in {csv_path}, "
-        f"got: {list(df.columns)}")
-    assert "OS" in df.columns, f"Expected 'OS' column in {csv_path}"
+    if id_col not in df.columns:
+        raise ValueError(
+            f"Expected 'ID' or 'patient_id' column in {csv_path}, "
+            f"got: {list(df.columns)}"
+        )
+    if "OS" not in df.columns:
+        raise ValueError(f"Expected 'OS' column in {csv_path}")
     os_map: dict[str, float] = {}
     for _, r in df.iterrows():
         pid = str(r[id_col]).strip()
@@ -315,12 +476,21 @@ def main() -> int:
     args = parser.parse_args()
 
     root = args.config.resolve().parent
-    cfg = _load_config(args.config.resolve())
+    cfg  = _load_config(args.config.resolve())
+
+    # Platform info
+    print(f"Platform: {platform.system()} | "
+          f"ANTs available: {_ants_available()} | "
+          f"use_ants_registration: {cfg['atlas'].get('use_ants_registration', True)}")
 
     # Load clinical OS
     csv_path = root / cfg["data"]["clinical_csv"]
-    days_pm = cfg["preprocessing"]["os_days_per_month"]
-    os_map = load_clinical_os(csv_path, days_pm)
+    days_pm  = cfg["preprocessing"]["os_days_per_month"]
+    os_map   = load_clinical_os(csv_path, days_pm)
+
+    # Scan transform cache once for resume-aware registration
+    tx_cache_dir = root / cfg["atlas"]["transforms_cache_dir"]
+    cached_affine_ids, cached_syn_ids = _scan_transform_cache(tx_cache_dir)
 
     # Discover patients
     patients = discover_patients(cfg, root)
@@ -334,22 +504,22 @@ def main() -> int:
 
     if args.dry_run:
         for p in patients:
-            os_m = os_map.get(p["id"], float("nan"))
+            os_m   = os_map.get(p["id"], float("nan"))
             in_csv = "yes" if p["id"] in os_map else "NO"
             print(f"  {p['id']}  OS={os_m:.1f}mo  csv={in_csv}")
         print("Dry run complete. No processing performed.")
         return 0
 
-    # Validate patient IDs match CSV
+    # Warn about patients missing from CSV
     missing = [p["id"] for p in patients if p["id"] not in os_map]
     if missing:
         print(f"WARNING: {len(missing)} patients have no CSV match: "
-              f"{missing[:5]}...")
+              f"{missing[:5]}{'...' if len(missing) > 5 else ''}")
 
-    # Build 4-lobe atlas
+    # Build 4-lobe atlas (once, cached)
     sri24_dir = root / cfg["data"]["sri24_dir"]
     atlas_out = root / "outputs" / "sri24_4lobe_atlas.nii.gz"
-    atlas_img, atlas_data = build_4lobe_atlas(
+    atlas_img, _ = build_4lobe_atlas(
         sri24_dir, cfg["atlas"]["lobe_dilation_voxels"], atlas_out)
 
     # Load brainmask
@@ -357,36 +527,63 @@ def main() -> int:
     if not tissues_path.exists():
         raise FileNotFoundError(f"Missing: {tissues_path}")
     bm_img, bm_data = _load_vol(tissues_path)
-    bm_img = nib.Nifti1Image((bm_data > 0).astype(np.uint8),
-                              bm_img.affine, bm_img.header)
+    bm_img = nib.Nifti1Image(
+        (bm_data > 0).astype(np.uint8), bm_img.affine, bm_img.header)
 
-    # Process patients
-    rows: list[dict] = []
-    for i, p in enumerate(patients, 1):
-        pid = p["id"]
-        os_m = os_map.get(pid, float("nan"))
-        print(f"[{i}/{len(patients)}] {pid} ...", end=" ", flush=True)
-
-        try:
-            seg_img, seg_data = _load_vol(p["seg"])
-            reg_atlas, reg_bm = register_atlas(
-                p["t1"], seg_img, atlas_img, bm_img, cfg, pid)
-            row = extract_features(seg_data, reg_atlas, reg_bm, pid, os_m)
-            rows.append(row)
-            rel = "OK" if row["lobe_assignment_reliable"] else "UNRELIABLE"
-            print(f"done ({rel})")
-        except Exception as e:
-            print(f"FAILED: {e}")
-
-    # Write output CSV
+    # Load already-processed patient IDs for crash-safe resumability
     out_csv = root / "outputs" / "features_raw.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
-    with out_csv.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=OUTPUT_COLS)
-        writer.writeheader()
-        writer.writerows(rows)
 
-    print(f"\nWrote {len(rows)} rows -> {out_csv}")
+    completed_ids: set[str] = set()
+    csv_exists = out_csv.exists()
+    if csv_exists:
+        import pandas as pd
+        try:
+            done_df = pd.read_csv(out_csv, usecols=["patient_id"])
+            completed_ids = set(done_df["patient_id"].astype(str).tolist())
+            print(f"[RESUME] Found {len(completed_ids)} already-processed patients in CSV.")
+        except Exception as e:
+            print(f"[WARN] Could not read existing CSV: {e}. Starting fresh.")
+            csv_exists = False
+
+    # Open CSV in append mode — write header only if file is new
+    failed: list[str] = []
+    csv_file = out_csv.open("a", newline="", encoding="utf-8")
+    writer = csv.DictWriter(csv_file, fieldnames=OUTPUT_COLS)
+    if not csv_exists:
+        writer.writeheader()
+
+    try:
+        for i, p in enumerate(patients, 1):
+            pid  = p["id"]
+            os_m = os_map.get(pid, float("nan"))
+
+            if pid in completed_ids:
+                print(f"[{i}/{len(patients)}] {pid} ... [SKIP] Already processed")
+                continue
+
+            print(f"[{i}/{len(patients)}] {pid} ...", end=" ", flush=True)
+
+            try:
+                seg_img, seg_data = _load_vol(p["seg"])
+                reg_atlas, reg_bm = register_atlas(
+                    p["t1"], seg_img, atlas_img, bm_img, cfg, pid,
+                    cached_affine_ids, cached_syn_ids)
+                row = extract_features(seg_data, reg_atlas, reg_bm, pid, os_m)
+                writer.writerow(row)
+                csv_file.flush()
+                rel = "OK" if row["lobe_assignment_reliable"] else "UNRELIABLE"
+                print(f"done ({rel}) [SAVE] Appended row")
+                completed_ids.add(pid)
+            except Exception as e:
+                print(f"FAILED: {e}")
+                failed.append(pid)
+    finally:
+        csv_file.close()
+
+    print(f"\nDone. CSV -> {out_csv}")
+    if failed:
+        print(f"Failed patients ({len(failed)}): {failed}")
     return 0
 
 

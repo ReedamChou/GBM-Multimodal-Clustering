@@ -6,7 +6,7 @@
 
 1. **Builds a 4-lobe SRI24 atlas** — Parses the TZO116 parcellation, groups ~116 cortical regions into 4 lobes (frontal, temporal, parietal, occipital), and fills gaps via distance-transform nearest-seed assignment within a dilated supratentorial mask. Result is cached as `outputs/sri24_4lobe_atlas.nii.gz`.
 
-2. **Registers the atlas to each patient's T1** — Uses ANTs affine registration (SRI24 T1 → patient T1), then warps the atlas and brainmask into patient space using nearest-neighbor interpolation. Transforms are cached per patient in `outputs/transforms/{patient_id}/`.
+2. **Registers the atlas to each patient's T1** — Uses ANTs affine registration (SRI24 T1 → patient T1), then warps the atlas and brainmask into patient space using nearest-neighbor interpolation. Transforms are cached in `outputs/transforms/` as `{patient_id}0GenericAffine.mat` and `{patient_id}1Warp.nii.gz`.
 
 3. **Extracts 16 radiomic features** — From the registered atlas + tumor segmentation, computes 4 global volumetric ratios and 12 lobe-level invasion fractions.
 
@@ -76,6 +76,11 @@ This represents **lobe invasion fraction** — what proportion of the frontal lo
 ## Fallback Mode
 
 Set `atlas.use_ants_registration: false` in `config.json` to use affine-based nearest-neighbor resampling via NIfTI headers. This assumes SRI24 and patient data share world coordinates (which is generally NOT true for UCSF-PDGM). Use only for testing or when ANTs is unavailable.
+
+## Resume + Cache Performance
+
+- The script scans the transform cache once at startup and builds in-memory sets for cached transforms.
+- CSV resume uses an in-memory set of processed patient IDs for O(1) membership checks.
 
 ## CLI Flags
 
