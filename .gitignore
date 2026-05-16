@@ -77,6 +77,11 @@ htmlcov/
 node_modules/
 .txt
 
+# extra md files
+implementation_plan.md
+New Project implimentaion Prompt.md
+report.md
+
 # Allow tracking pipeline outputs
 !outputs/
 !outputs/**
@@ -85,3 +90,4 @@ node_modules/
 !outputs/**/*.nii.gz
 !outputs/**/*.nifti
 
+old-atlasregistration-files/
