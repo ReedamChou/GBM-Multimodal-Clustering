@@ -52,6 +52,7 @@ FEATURE_COLS = [
 
 TARGET_COL = "risk_label"
 LABEL_NAMES = ["low-risk", "high-risk"]
+MODALITIES = ("T1", "T2", "T1GD", "FLAIR")
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +63,25 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("config.json"),
         help="Path to config.json",
+    )
+    parser.add_argument(
+        "--modality",
+        choices=MODALITIES,
+        type=str.upper,
+        default=None,
+        help="Modality for default inputs/outputs (T1, T2, T1GD, FLAIR).",
+    )
+    parser.add_argument(
+        "--input",
+        type=str,
+        default=None,
+        help="Processed features CSV (overrides config/modality default).",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Root output directory (overrides config/modality default).",
     )
     return parser.parse_args()
 
@@ -778,8 +798,20 @@ def main() -> None:
     cfg = load_config(resolve_path(root, str(args.config)))
     training_cfg = cfg.get("training", {})
 
-    input_csv = training_cfg.get("input_csv", "outputs/features_processed.csv")
-    output_root = training_cfg.get("output_dir", "outputs")
+    input_cfg = training_cfg.get("input_csv", "outputs/features_processed.csv")
+    output_cfg = training_cfg.get("output_dir", "outputs")
+
+    if args.modality:
+        modality = args.modality.upper()
+        modality_lc = modality.lower()
+        default_input = f"outputs/features_processed_{modality_lc}.csv"
+        default_output = f"outputs/{modality}"
+    else:
+        default_input = input_cfg
+        default_output = output_cfg
+
+    input_csv = args.input or default_input
+    output_root = args.output or default_output
 
     random_state = int(training_cfg.get("random_seed", 42))
     test_size = float(training_cfg.get("test_size", 0.15))

@@ -127,14 +127,21 @@ def main() -> int:
         help="Path to config.json (default: config.json)",
     )
     parser.add_argument(
+        "--modality",
+        choices=MODALITIES,
+        type=str.upper,
+        default="T1",
+        help="Modality for default inputs/outputs (default: T1).",
+    )
+    parser.add_argument(
         "--input",
-        default="outputs/features_raw.csv",
-        help="Input CSV (default: outputs/features_raw.csv)",
+        default=None,
+        help="Input CSV (defaults to modality-specific outputs/features_raw_{mod}.csv)",
     )
     parser.add_argument(
         "--output",
-        default="outputs/features_processed.csv",
-        help="Output CSV (default: outputs/features_processed.csv)",
+        default=None,
+        help="Output CSV (defaults to modality-specific outputs/features_processed_{mod}.csv)",
     )
     parser.add_argument(
         "--scale",
@@ -158,8 +165,13 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     cfg = _load_config(_resolve_path(root, args.config))
 
-    in_csv = _resolve_path(root, args.input)
-    out_csv = _resolve_path(root, args.output)
+    modality = args.modality.upper()
+    modality_lc = modality.lower()
+    default_in = f"outputs/features_raw_{modality_lc}.csv"
+    default_out = f"outputs/features_processed_{modality_lc}.csv"
+
+    in_csv = _resolve_path(root, args.input or default_in)
+    out_csv = _resolve_path(root, args.output or default_out)
 
     return preprocess(in_csv, out_csv, cfg, args.scale)
 

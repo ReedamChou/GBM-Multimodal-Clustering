@@ -3,13 +3,16 @@
 risk stratification.
 
 Builds a 4-lobe atlas from SRI24 parcellation, registers it to each
-patient's native T1 space via ANTs (or affine fallback on Windows),
+patient's native MRI space via ANTs (or affine fallback on Windows),
 then extracts exactly 16 radiomic features per patient.
 
 Usage:
-    python src/atlas_registration.py                            # full batch
-    python src/atlas_registration.py --dry-run                  # list patients
-    python src/atlas_registration.py --patient UCSF-PDGM-0004  # single patient
+    python src/atlas_registration.py                            # full batch (default: T1)
+    python src/atlas_registration.py --modality T1GD           # use T1GD as fixed image
+    python src/atlas_registration.py --modality FLAIR --dry-run
+    python src/atlas_registration.py --patient UCSF-PDGM-0004 --modality T2
+
+Supported modalities: T1, T2, T1GD, FLAIR
 """
 
 from __future__ import annotations
@@ -53,6 +56,22 @@ assert len(FEATURE_COLS) == 16
 OUTPUT_COLS = ["patient_id", *FEATURE_COLS, "OS_months", "lobe_assignment_reliable"]
 
 IS_WINDOWS = platform.system() == "Windows"
+
+# Supported modalities and their config-key suffixes
+MODALITY_SUFFIX_KEY: dict[str, str] = {
+    "T1":   "t1_suffix",
+    "T2":   "t2_suffix",
+    "T1GD": "t1gd_suffix",
+    "FLAIR": "flair_suffix",
+}
+
+# linear for intensity images; nearestNeighbor stays for atlas/brainmask
+MODALITY_INTERPOLATOR: dict[str, str] = {
+    "T1":    "linear",
+    "T2":    "linear",
+    "T1GD":  "linear",
+    "FLAIR": "linear",
+}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -220,7 +239,7 @@ def _affine_resample_nn(
 
 
 def _ants_register(
-    patient_t1: Path,
+    patient_img: Path,
     sri24_t1: Path,
     atlas_img: nib.Nifti1Image,
     brainmask_img: nib.Nifti1Image,
@@ -230,13 +249,13 @@ def _ants_register(
     cached_syn_ids: set[str],
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    ANTs registration: SRI24 T1 -> patient T1.
+    ANTs registration: SRI24 T1 -> patient native space (fixed = patient_img).
     Applies same transform to atlas (label vol) and brainmask.
     Uses modern antspyx API — no ants.from_nibabel().
     """
     import ants  # type: ignore
 
-    fixed = ants.image_read(str(patient_t1))
+    fixed = ants.image_read(str(patient_img))
     moving = ants.image_read(str(sri24_t1))
 
     # Flat prefix cache: outputs/transforms/UCSF-PDGM-01020GenericAffine.mat
@@ -325,7 +344,7 @@ def _scan_transform_cache(cache_dir: Path) -> tuple[set[str], set[str]]:
 
 
 def register_atlas(
-    patient_t1: Path,
+    patient_img: Path,
     seg_img: nib.Nifti1Image,
     atlas_img: nib.Nifti1Image,
     brainmask_img: nib.Nifti1Image,
@@ -335,7 +354,7 @@ def register_atlas(
     cached_syn_ids: set[str] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Return (registered_atlas, registered_brainmask) in patient space.
+    Return (registered_atlas, registered_brainmask) in patient native space.
 
     Priority:
     1. ANTs (if use_ants_registration=true AND antspyx importable)
@@ -364,7 +383,7 @@ def register_atlas(
                 )
             tx_dir = Path(cfg["atlas"]["transforms_cache_dir"]) / patient_id
             return _ants_register(
-                patient_t1, sri24_t1,
+                patient_img, sri24_t1,
                 atlas_img, brainmask_img,
                 tx_dir, cfg["atlas"]["registration_type"],
                 cached_affine_ids, cached_syn_ids,
@@ -425,23 +444,24 @@ def extract_features(
 
 
 # ── Section D: Discovery + batch runner ───────────────────────────────────
-def discover_patients(cfg: dict, root: Path) -> list[dict]:
-    """Find patients with both T1 and segmentation files."""
-    struct_dir = root / cfg["data"]["ucsf_root"] / cfg["data"]["structural_subdir"]
-    seg_dir    = root / cfg["data"]["ucsf_root"] / cfg["data"]["segmentation_subdir"]
-    t1_sfx     = cfg["data"]["t1_suffix"]
-    seg_sfx    = cfg["data"]["seg_suffix"]
+def discover_patients(cfg: dict, root: Path, modality: str) -> list[dict]:
+    """Find patients that have both the chosen modality file and segmentation."""
+    struct_dir  = root / cfg["data"]["ucsf_root"] / cfg["data"]["structural_subdir"]
+    seg_dir     = root / cfg["data"]["ucsf_root"] / cfg["data"]["segmentation_subdir"]
+    suffix_key  = MODALITY_SUFFIX_KEY[modality]          # e.g. "t1gd_suffix"
+    mod_sfx     = cfg["data"][suffix_key]                # e.g. "_T1GD.nii.gz"
+    seg_sfx     = cfg["data"]["seg_suffix"]
 
     patients = []
     for d in sorted(struct_dir.iterdir()):
         if not d.is_dir() or d.name.startswith("."):
             continue
-        pid = d.name
-        t1  = d / f"{pid}{t1_sfx}"
-        seg = seg_dir / f"{pid}{seg_sfx}"
-        if not t1.exists() or not seg.exists():
+        pid     = d.name
+        mod_img = d / f"{pid}{mod_sfx}"
+        seg     = seg_dir / f"{pid}{seg_sfx}"
+        if not mod_img.exists() or not seg.exists():
             continue
-        patients.append({"id": pid, "t1": t1, "seg": seg})
+        patients.append({"id": pid, "img": mod_img, "seg": seg})
     return patients
 
 
@@ -471,19 +491,36 @@ def load_clinical_os(csv_path: Path, days_per_month: float) -> dict[str, float]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, default=Path("config.json"))
+    parser.add_argument(
+        "--modality",
+        choices=list(MODALITY_SUFFIX_KEY.keys()),
+        default="T1",
+        help="Fixed image modality for registration (default: T1). "
+             "Choices: T1, T2, T1GD, FLAIR",
+    )
     parser.add_argument("--patient", type=str, default=None,
                         help="Run for a single patient ID only.")
     parser.add_argument("--dry-run", action="store_true",
                         help="List discovered patients without processing.")
     args = parser.parse_args()
 
+    modality     = args.modality.upper()
+    modality_lc  = modality.lower()          # used in output filename
+
     root = args.config.resolve().parent
     cfg  = _load_config(args.config.resolve())
+
+    # Persist the chosen modality into config so the run is self-documenting
+    cfg["atlas"]["active_modality"] = modality
+    with args.config.resolve().open("w") as fh:
+        json.dump(cfg, fh, indent=2)
+    print(f"[CONFIG] active_modality set to '{modality}' in {args.config.resolve().name}")
 
     # Platform info
     print(f"Platform: {platform.system()} | "
           f"ANTs available: {_ants_available()} | "
-          f"use_ants_registration: {cfg['atlas'].get('use_ants_registration', True)}")
+          f"use_ants_registration: {cfg['atlas'].get('use_ants_registration', True)} | "
+          f"Modality: {modality}")
 
     # Load clinical OS
     csv_path = root / cfg["data"]["clinical_csv"]
@@ -494,15 +531,15 @@ def main() -> int:
     tx_cache_dir = root / cfg["atlas"]["transforms_cache_dir"]
     cached_affine_ids, cached_syn_ids = _scan_transform_cache(tx_cache_dir)
 
-    # Discover patients
-    patients = discover_patients(cfg, root)
+    # Discover patients (modality-aware — skips patients missing the file)
+    patients = discover_patients(cfg, root, modality)
     if args.patient:
         patients = [p for p in patients if p["id"] == args.patient]
         if not patients:
             print(f"ERROR: patient '{args.patient}' not found.")
             return 1
 
-    print(f"Found {len(patients)} patients with T1 + segmentation files.")
+    print(f"Found {len(patients)} patients with {modality} + segmentation files.")
 
     if args.dry_run:
         for p in patients:
@@ -532,8 +569,8 @@ def main() -> int:
     bm_img = nib.Nifti1Image(
         (bm_data > 0).astype(np.uint8), bm_img.affine, bm_img.header)
 
-    # Load already-processed patient IDs for crash-safe resumability
-    out_csv = root / "outputs" / "features_raw.csv"
+    # Output CSV is modality-specific — T1 results are never overwritten
+    out_csv = root / "outputs" / f"features_raw_{modality_lc}.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     completed_ids: set[str] = set()
@@ -569,7 +606,7 @@ def main() -> int:
             try:
                 seg_img, seg_data = _load_vol(p["seg"])
                 reg_atlas, reg_bm = register_atlas(
-                    p["t1"], seg_img, atlas_img, bm_img, cfg, pid,
+                    p["img"], seg_img, atlas_img, bm_img, cfg, pid,
                     cached_affine_ids, cached_syn_ids)
                 row = extract_features(seg_data, reg_atlas, reg_bm, pid, os_m)
                 writer.writerow(row)
