@@ -90,3 +90,4 @@ report.md
 !outputs/**/*.nii.gz
 !outputs/**/*.nifti
 
+old-atlasregistration-files/
