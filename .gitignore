@@ -48,7 +48,6 @@ env/
 *.nii.gz
 *.nifti
 data/raw/
-outputs/
 old-atlasregistration-files/
 training/models/
 training/cache/
@@ -77,4 +76,12 @@ htmlcov/
 *.log
 node_modules/
 .txt
+
+# Allow tracking pipeline outputs
+!outputs/
+!outputs/**
+!outputs/**/*.txt
+!outputs/**/*.nii
+!outputs/**/*.nii.gz
+!outputs/**/*.nifti
 

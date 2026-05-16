@@ -48,9 +48,5 @@ Remaining gap may reflect registration quality or cohort differences.
 - outputs/metrics/baseline_results.csv
 - outputs/reports/training_summary.md
 
-## 6. Recommended Next Checks
 
-- Re-run with ANTs registration on Linux/WSL to reduce atlas misalignment
-- Review lobe-assignment reliability threshold impact on sample size
-- Compare SHAP top features with the abstract (frontal_en_ratio, tumor_burden_index, frontal_ed_ratio)
-- Inspect fold-level AUC variance for stability
+
