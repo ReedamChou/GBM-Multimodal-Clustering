@@ -58,6 +58,7 @@ def _print_id_list(label: str, ids: list[str]) -> None:
 
 
 def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
+    # Load and validate inputs
     if not in_csv.exists():
         raise FileNotFoundError(f"Input CSV not found: {in_csv}")
 
@@ -69,6 +70,7 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     start_rows = len(df)
     id_col = "patient_id"
 
+    # Filter by QA flag and OS availability
     reliable_mask = _coerce_bool_series(df["lobe_assignment_reliable"])
     dropped_unreliable = df[~reliable_mask]
     df = df[reliable_mask].copy()
@@ -79,15 +81,18 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     df = df[~missing_os_mask].copy()
     df["OS_months"] = os_numeric[~missing_os_mask]
 
+    # Binary label assignment (high-risk if OS <= threshold)
     threshold = float(cfg["preprocessing"]["os_high_risk_threshold_months"])
     df["risk_label"] = (df["OS_months"] <= threshold).astype(int)
 
+    # Impute feature nulls with column medians
     features = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
     medians = features.median()
     if medians.isna().any():
         print("WARNING: Some feature columns are all-NaN after filtering.")
     features = features.fillna(medians)
 
+    # Optional scaling (not used in default workflow)
     if scale:
         scaler = StandardScaler()
         features = pd.DataFrame(
@@ -96,6 +101,7 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
             index=features.index,
         )
 
+    # Final training table: 16 features + risk_label
     out_df = pd.concat([features, df["risk_label"]], axis=1)
 
     out_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +171,7 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     cfg = _load_config(_resolve_path(root, args.config))
 
+    # Resolve modality-specific defaults unless overridden by --input/--output
     modality = args.modality.upper()
     modality_lc = modality.lower()
     default_in = f"outputs/features_raw_{modality_lc}.csv"

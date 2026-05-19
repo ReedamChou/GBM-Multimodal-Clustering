@@ -57,7 +57,7 @@ OUTPUT_COLS = ["patient_id", *FEATURE_COLS, "OS_months", "lobe_assignment_reliab
 
 IS_WINDOWS = platform.system() == "Windows"
 
-# Supported modalities and their config-key suffixes
+# Supported modalities and their config-key suffixes for file discovery
 MODALITY_SUFFIX_KEY: dict[str, str] = {
     "T1":   "t1_suffix",
     "T2":   "t2_suffix",
@@ -65,7 +65,7 @@ MODALITY_SUFFIX_KEY: dict[str, str] = {
     "FLAIR": "flair_suffix",
 }
 
-# linear for intensity images; nearestNeighbor stays for atlas/brainmask
+# Intensity modalities use linear; atlas/brainmask always use nearest neighbor
 MODALITY_INTERPOLATOR: dict[str, str] = {
     "T1":    "linear",
     "T2":    "linear",
@@ -121,11 +121,11 @@ def _nib_to_ants(nib_img: nib.Nifti1Image):
     # Extract spacing (voxel sizes) from affine
     spacing = tuple(float(np.linalg.norm(affine[:3, i])) for i in range(3))
 
-    # Extract origin
+    # Convert nibabel RAS affine to LPS for ANTsPy from_numpy
     ras2lps = np.diag([-1.0, -1.0, 1.0])
     origin = tuple(float(x) for x in (ras2lps @ affine[:3, 3]))
 
-    # Extract direction cosines (unit column vectors)
+    # Direction cosines in LPS orientation (row-major for ANTs)
     direction = np.zeros((3, 3), dtype=np.float64)
     for i in range(3):
         col = affine[:3, i]
@@ -185,6 +185,7 @@ def build_4lobe_atlas(
     sri24_dir: Path, dilation: int, out_path: Path
 ) -> tuple[nib.Nifti1Image, np.ndarray]:
     """Build or load the filled 4-lobe atlas in SRI24 space."""
+    # Cached atlas avoids rebuilding on every run
     if out_path.exists():
         print(f"  Cached atlas: {out_path}")
         return _load_vol(out_path)
@@ -198,6 +199,7 @@ def build_4lobe_atlas(
 
     tzo_img, tzo_data = _load_vol(tzo_path)
     _, sup_data = _load_vol(sup_path)
+    # Seed voxels by lobe, then fill unlabeled voxels inside supratent mask
     seeds = _build_seeds(tzo_data.astype(np.int32), _parse_tzo_labels(lbl_path))
 
     mask = sup_data > 0
@@ -264,6 +266,7 @@ def _ants_register(
     affine_mat = flat_dir / f"{prefix}0GenericAffine.mat"
     warp_field = flat_dir / f"{prefix}1Warp.nii.gz"
 
+    # Reuse cached transforms when available
     if reg_type == "SyN" and prefix in cached_syn_ids:
         tx_list = [str(warp_field), str(affine_mat)]
         print("    [CACHE] Reusing SyN transforms")
@@ -281,6 +284,7 @@ def _ants_register(
         )
         tx_list = reg["fwdtransforms"]
         print("done")
+        # Update cache sets after a successful registration
         if reg_type == "SyN":
             cached_affine_ids.add(prefix)
             cached_syn_ids.add(prefix)
@@ -321,6 +325,7 @@ def _ants_available() -> bool:
 
 def _scan_transform_cache(cache_dir: Path) -> tuple[set[str], set[str]]:
     """Scan transform cache once and return (affine_ids, syn_ids)."""
+    # Build in-memory sets for O(1) transform cache checks
     if not cache_dir.exists():
         return set(), set()
 
@@ -436,7 +441,7 @@ def extract_features(
         row[f"{lobe_name}_en_ratio"] = _sdiv(en_in, lobe_total)
         row[f"{lobe_name}_nc_ratio"] = _sdiv(nc_in, lobe_total)
 
-    # QA
+    # QA: require most tumor voxels to map into a lobe
     reliable = (_sdiv(mapped_vox, wt_total) >= 0.90) if wt_total > 0 else False
     row["OS_months"] = os_months
     row["lobe_assignment_reliable"] = reliable
@@ -605,6 +610,7 @@ def main() -> int:
 
             try:
                 seg_img, seg_data = _load_vol(p["seg"])
+                # Register atlas/brainmask into patient space, then extract features
                 reg_atlas, reg_bm = register_atlas(
                     p["img"], seg_img, atlas_img, bm_img, cfg, pid,
                     cached_affine_ids, cached_syn_ids)

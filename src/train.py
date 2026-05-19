@@ -56,6 +56,7 @@ MODALITIES = ("T1", "T2", "T1GD", "FLAIR")
 
 
 def parse_args() -> argparse.Namespace:
+    # CLI options for config, modality defaults, and explicit overrides
     parser = argparse.ArgumentParser(
         description="Run the GBM risk classification training workflow.")
     parser.add_argument(
@@ -196,6 +197,7 @@ def fit_xgb_with_optional_early_stopping(
 
 
 def load_dataset(input_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, dict[str, object]]:
+    # Load processed CSV and enforce feature/label schema
     df = pd.read_csv(input_csv)
     missing = [c for c in FEATURE_COLS + [TARGET_COL] if c not in df.columns]
     if missing:
@@ -206,6 +208,7 @@ def load_dataset(input_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series
     df = df[valid_mask].copy()
     y = y[valid_mask].astype(int)
 
+    # Median-impute remaining feature nulls
     X = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
     total_nulls = int(X.isnull().sum().sum())
     X = X.fillna(X.median())
@@ -253,6 +256,7 @@ def plot_feature_distributions(X: pd.DataFrame, labels: pd.Series, figure_path: 
 
 
 def plot_correlation_heatmap(X: pd.DataFrame, figure_path: Path) -> pd.DataFrame:
+    # Correlation heatmap for exploratory analysis
     corr = X.corr()
     plt.figure(figsize=(12, 10))
     sns.heatmap(corr, annot=False, cmap="coolwarm", center=0)
@@ -338,6 +342,7 @@ def run_baselines(
     y_val: pd.Series,
     output_path: Path,
 ) -> pd.DataFrame:
+    # Baselines: scaled linear/SVM/KNN and unscaled tree models
     scaled_models = {
         "LogisticRegression": LogisticRegression(
             max_iter=1000,
@@ -454,6 +459,7 @@ def tune_xgboost(
     early_stopping_rounds: int,
     trials_output_path: Path,
 ) -> tuple[optuna.Study, dict[str, object]]:
+    # Optuna search over XGBoost hyperparameters
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     def objective(trial: optuna.Trial) -> float:
@@ -650,6 +656,7 @@ def final_cross_validation(
     device: str,
     output_path: Path,
 ) -> dict[str, object]:
+    # Final stratified CV with best params
     params = xgb_base_params(
         device=device,
         random_state=random_state,
@@ -801,6 +808,7 @@ def main() -> None:
     input_cfg = training_cfg.get("input_csv", "outputs/features_processed.csv")
     output_cfg = training_cfg.get("output_dir", "outputs")
 
+    # Resolve modality-specific defaults unless explicit overrides are provided
     if args.modality:
         modality = args.modality.upper()
         modality_lc = modality.lower()
@@ -824,8 +832,10 @@ def main() -> None:
     input_csv = resolve_path(root, input_csv)
     outputs_root = resolve_path(root, output_root)
 
+    # Create output folders and begin pipeline
     paths = ensure_directories(outputs_root)
 
+    # Load dataset and save summaries
     clean_df, X, y, dataset_summary = load_dataset(input_csv)
     save_json(dataset_summary, paths["metrics"] / "dataset_summary.json")
 
@@ -835,6 +845,7 @@ def main() -> None:
     device_summary = detect_xgboost_device(random_state=random_state)
     save_json(device_summary, paths["logs"] / "gpu_status.json")
 
+    # Exploratory figures
     plot_class_distribution(y, paths["figures"] / "class_distribution.png")
     plot_feature_distributions(X, y, paths["figures"] / "feature_distributions.png")
     corr_matrix = plot_correlation_heatmap(X, paths["figures"] / "correlation_heatmap.png")
@@ -842,6 +853,7 @@ def main() -> None:
     high_corr_df.to_csv(paths["tables"] / "high_correlation_pairs.csv", index=False)
     X.describe().transpose().to_csv(paths["tables"] / "feature_summary.csv")
 
+    # Train/val/test split
     X_train, X_val, X_test, y_train, y_val, y_test = split_dataset(
         X=X,
         y=y,
@@ -861,6 +873,7 @@ def main() -> None:
         paths["tables"] / "split_assignments.csv",
     )
 
+    # Baseline models on validation split
     baseline_df = run_baselines(
         X_train=X_train,
         X_val=X_val,
@@ -869,6 +882,7 @@ def main() -> None:
         output_path=paths["metrics"] / "baseline_results.csv",
     )
 
+    # Fixed-params XGBoost with early stopping
     validation_model = fit_validation_xgb(
         X_train=X_train,
         X_val=X_val,
@@ -885,6 +899,7 @@ def main() -> None:
     }
     save_json(validation_metrics, paths["metrics"] / "validation_xgboost_metrics.json")
 
+    # Optuna tuning on train+val
     study, best_params = tune_xgboost(
         X_trainval=X_trainval,
         y_trainval=y_trainval,
@@ -897,6 +912,7 @@ def main() -> None:
     )
     save_json(best_params, paths["models"] / "best_params.json")
 
+    # Fit best model on full train+val
     best_model = fit_best_model(
         X_trainval=X_trainval,
         y_trainval=y_trainval,
@@ -905,6 +921,7 @@ def main() -> None:
         random_state=random_state,
     )
 
+    # Evaluate on held-out test set and save artifacts
     test_metrics = evaluate_model(
         model=best_model,
         X_test=X_test,
@@ -915,6 +932,7 @@ def main() -> None:
     save_feature_importance(best_model, list(X_trainval.columns), paths["figures"], paths["tables"])
     save_shap_outputs(best_model, X_test, list(X_test.columns), paths["figures"], paths["logs"])
 
+    # Final cross-validation on full dataset
     cv_summary = final_cross_validation(
         X=X,
         y=y,
@@ -937,6 +955,7 @@ def main() -> None:
         outputs_root / "cv_results.json",
     )
 
+    # Persist models and reports
     save_model_artifacts(best_model, outputs_root)
 
     report = build_markdown_report(
