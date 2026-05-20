@@ -11,6 +11,7 @@ import argparse
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
@@ -24,6 +25,9 @@ FEATURE_COLS = [
 ]
 
 MODALITIES = ("T1", "T2", "T1GD", "FLAIR")
+
+MIN_TUMOR_BURDEN = 0.0
+LOBE_ZERO_FRACTION_THRESHOLD = 0.5
 
 REQUIRED_COLS = [
     "patient_id",
@@ -59,6 +63,17 @@ def _print_id_list(label: str, ids: list[str]) -> None:
     print(", ".join(ids))
 
 
+def _feature_qc_mask(features: pd.DataFrame) -> pd.Series:
+    lobe_cols = FEATURE_COLS[4:]
+    finite_mask = np.isfinite(features).all(axis=1)
+    tbi_mask = features["tumor_burden_index"] > MIN_TUMOR_BURDEN
+    lobe_vals = features[lobe_cols]
+    zero_or_invalid = (lobe_vals <= 0) | ~np.isfinite(lobe_vals)
+    lobe_zero_fraction = zero_or_invalid.sum(axis=1) / len(lobe_cols)
+    lobe_mask = lobe_zero_fraction < LOBE_ZERO_FRACTION_THRESHOLD
+    return finite_mask & tbi_mask & lobe_mask
+
+
 def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     # Load and validate inputs
     if not in_csv.exists():
@@ -87,8 +102,14 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     threshold = float(cfg["preprocessing"]["os_high_risk_threshold_months"])
     df["risk_label"] = (df["OS_months"] <= threshold).astype(int)
 
+    # Modality-specific feature QC (degenerate rows, NaN/Inf, zeroed lobes)
+    raw_features = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
+    feature_qc_mask = _feature_qc_mask(raw_features)
+    dropped_feature_qc = df[~feature_qc_mask]
+    df = df[feature_qc_mask].copy()
+
     # Coerce features to numeric and impute nulls with column medians
-    features = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
+    features = raw_features[feature_qc_mask].copy()
     medians = features.median()
     if medians.isna().any():
         print("WARNING: Some feature columns are all-NaN after filtering.")
@@ -114,6 +135,7 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     print(f"Kept {len(out_df)} rows after filtering (removed {removed})")
     print(f"  Unreliable lobe assignment: {len(dropped_unreliable)}")
     print(f"  Missing/invalid OS_months: {len(dropped_missing_os)}")
+    print(f"  Modality feature QC failures: {len(dropped_feature_qc)}")
     _print_id_list(
         "Dropped (lobe_assignment_reliable=False):",
         dropped_unreliable["patient_id"].astype(str).tolist(),
@@ -121,6 +143,10 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     _print_id_list(
         "Dropped (missing or invalid OS_months):",
         dropped_missing_os["patient_id"].astype(str).tolist(),
+    )
+    _print_id_list(
+        "Dropped (modality feature QC failures):",
+        dropped_feature_qc["patient_id"].astype(str).tolist(),
     )
     print(f"Wrote {len(out_df)} rows -> {out_csv}")
     return 0

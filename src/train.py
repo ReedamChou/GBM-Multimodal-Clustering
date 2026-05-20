@@ -208,10 +208,9 @@ def load_dataset(input_csv: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series
     df = df[valid_mask].copy()
     y = y[valid_mask].astype(int)
 
-    # Median-impute remaining feature nulls
+    # Convert features to numeric; imputation happens after splitting
     X = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
     total_nulls = int(X.isnull().sum().sum())
-    X = X.fillna(X.median())
 
     summary = {
         "rows_after_label_drop": int(len(df)),
@@ -889,20 +888,6 @@ def main() -> None:
     clean_df, X, y, dataset_summary = load_dataset(input_csv)
     save_json(dataset_summary, paths["metrics"] / "dataset_summary.json")
 
-    feature_summary = get_feature_summary(X, y)
-    save_json(feature_summary, paths["metrics"] / "feature_summary.json")
-
-    device_summary = detect_xgboost_device(random_state=random_state)
-    save_json(device_summary, paths["logs"] / "gpu_status.json")
-
-    # Exploratory figures
-    plot_class_distribution(y, paths["figures"] / "class_distribution.png")
-    plot_feature_distributions(X, y, paths["figures"] / "feature_distributions.png")
-    corr_matrix = plot_correlation_heatmap(X, paths["figures"] / "correlation_heatmap.png")
-    high_corr_df = high_correlation_pairs(corr_matrix, threshold=0.9)
-    high_corr_df.to_csv(paths["tables"] / "high_correlation_pairs.csv", index=False)
-    X.describe().transpose().to_csv(paths["tables"] / "feature_summary.csv")
-
     # Train/val/test split
     X_train, X_val, X_test, y_train, y_val, y_test = split_dataset(
         X=X,
@@ -911,8 +896,33 @@ def main() -> None:
         test_size=test_size,
         validation_fraction_of_trainval=val_frac,
     )
+
+    # Median imputation (train-only statistics) to avoid leakage
+    train_medians = X_train.median()
+    if train_medians.isna().any():
+        print("WARNING: Some feature columns are all-NaN in training; imputing zeros.")
+        train_medians = train_medians.fillna(0.0)
+    X_train = X_train.fillna(train_medians)
+    X_val = X_val.fillna(train_medians)
+    X_test = X_test.fillna(train_medians)
+    X_imputed = X.fillna(train_medians)
+
     X_trainval = pd.concat([X_train, X_val]).sort_index()
     y_trainval = pd.concat([y_train, y_val]).sort_index()
+
+    feature_summary = get_feature_summary(X_imputed, y)
+    save_json(feature_summary, paths["metrics"] / "feature_summary.json")
+
+    device_summary = detect_xgboost_device(random_state=random_state)
+    save_json(device_summary, paths["logs"] / "gpu_status.json")
+
+    # Exploratory figures
+    plot_class_distribution(y, paths["figures"] / "class_distribution.png")
+    plot_feature_distributions(X_imputed, y, paths["figures"] / "feature_distributions.png")
+    corr_matrix = plot_correlation_heatmap(X_imputed, paths["figures"] / "correlation_heatmap.png")
+    high_corr_df = high_correlation_pairs(corr_matrix, threshold=0.9)
+    high_corr_df.to_csv(paths["tables"] / "high_correlation_pairs.csv", index=False)
+    X_imputed.describe().transpose().to_csv(paths["tables"] / "feature_summary.csv")
 
     save_split_assignments(
         clean_df,
@@ -986,7 +996,7 @@ def main() -> None:
 
     # Final cross-validation on full dataset
     cv_summary = final_cross_validation(
-        X=X,
+        X=X_imputed,
         y=y,
         best_params=best_params,
         random_state=random_state,
