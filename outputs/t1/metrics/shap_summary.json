@@ -1,0 +1,89 @@
+{
+  "top_features": [
+    {
+      "rank": 1,
+      "feature": "frontal_en_ratio",
+      "mean_abs_shap": 0.198355
+    },
+    {
+      "rank": 2,
+      "feature": "temporal_en_ratio",
+      "mean_abs_shap": 0.117982
+    },
+    {
+      "rank": 3,
+      "feature": "global_nc_en_ratio",
+      "mean_abs_shap": 0.097059
+    },
+    {
+      "rank": 4,
+      "feature": "frontal_ed_ratio",
+      "mean_abs_shap": 0.084464
+    },
+    {
+      "rank": 5,
+      "feature": "global_ed_total_ratio",
+      "mean_abs_shap": 0.078764
+    },
+    {
+      "rank": 6,
+      "feature": "temporal_ed_ratio",
+      "mean_abs_shap": 0.0618
+    },
+    {
+      "rank": 7,
+      "feature": "tumor_burden_index",
+      "mean_abs_shap": 0.053977
+    },
+    {
+      "rank": 8,
+      "feature": "frontal_nc_ratio",
+      "mean_abs_shap": 0.052009
+    },
+    {
+      "rank": 9,
+      "feature": "global_ed_en_ratio",
+      "mean_abs_shap": 0.045906
+    },
+    {
+      "rank": 10,
+      "feature": "temporal_nc_ratio",
+      "mean_abs_shap": 0.039622
+    },
+    {
+      "rank": 11,
+      "feature": "parietal_ed_ratio",
+      "mean_abs_shap": 0.037321
+    },
+    {
+      "rank": 12,
+      "feature": "occipital_nc_ratio",
+      "mean_abs_shap": 0.016846
+    },
+    {
+      "rank": 13,
+      "feature": "occipital_ed_ratio",
+      "mean_abs_shap": 0.015085
+    },
+    {
+      "rank": 14,
+      "feature": "parietal_en_ratio",
+      "mean_abs_shap": 0.01001
+    },
+    {
+      "rank": 15,
+      "feature": "occipital_en_ratio",
+      "mean_abs_shap": 0.008197
+    },
+    {
+      "rank": 16,
+      "feature": "parietal_nc_ratio",
+      "mean_abs_shap": 0.007419
+    }
+  ],
+  "top3": [
+    "frontal_en_ratio",
+    "temporal_en_ratio",
+    "global_nc_en_ratio"
+  ]
+}
