@@ -612,7 +612,13 @@ def save_shap_outputs(
     feature_names: list[str],
     figures_dir: Path,
     logs_dir: Path,
-) -> None:
+) -> dict[str, object]:
+    """
+    Run SHAP analysis on the final model.
+    Saves beeswarm + bar plots and returns a ranked summary dict
+    so it can be embedded in the training report.
+    Returns empty dict on failure (error logged to shap_error.txt).
+    """
     error_path = logs_dir / "shap_error.txt"
     try:
         explainer = shap.TreeExplainer(model)
@@ -620,6 +626,7 @@ def save_shap_outputs(
         if isinstance(shap_values, list):
             shap_values = shap_values[1] if len(shap_values) > 1 else shap_values[0]
 
+        # ── Bar plot (mean |SHAP|) ────────────────────────────────────────
         shap.summary_plot(
             shap_values,
             X_test,
@@ -632,6 +639,7 @@ def save_shap_outputs(
         plt.savefig(figures_dir / "shap_importance.png", dpi=150)
         plt.close()
 
+        # ── Beeswarm plot ─────────────────────────────────────────────────
         shap.summary_plot(
             shap_values,
             X_test,
@@ -641,10 +649,29 @@ def save_shap_outputs(
         plt.tight_layout()
         plt.savefig(figures_dir / "shap_summary.png", dpi=150)
         plt.close()
+
+        # ── Ranked feature importance by mean |SHAP| ─────────────────────
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)
+        ranked = sorted(
+            zip(feature_names, mean_abs_shap.tolist()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        shap_summary = {
+            "top_features": [
+                {"rank": i + 1, "feature": feat, "mean_abs_shap": round(val, 6)}
+                for i, (feat, val) in enumerate(ranked)
+            ],
+            "top3": [feat for feat, _ in ranked[:3]],
+        }
+
         if error_path.exists():
             error_path.unlink()
+        return shap_summary
+
     except Exception as exc:
         error_path.write_text(str(exc), encoding="utf-8")
+        return {}
 
 
 def final_cross_validation(
@@ -753,8 +780,31 @@ def build_markdown_report(
     best_params: dict[str, object],
     optuna_best_value: float,
     config: dict[str, object],
+    shap_summary: dict[str, object] | None = None,
 ) -> str:
     best_baseline = baseline_df.iloc[0].to_dict() if not baseline_df.empty else {}
+
+    # ── SHAP section ──────────────────────────────────────────────────────
+    if shap_summary and shap_summary.get("top_features"):
+        top3 = shap_summary.get("top3", [])
+        shap_rows = "\n".join(
+            f"| {entry['rank']} | `{entry['feature']}` | {entry['mean_abs_shap']:.6f} |"
+            for entry in shap_summary["top_features"]
+        )
+        shap_section = f"""
+## SHAP Feature Importance (High-Risk Class)
+
+Top 3 dominant features: **{", ".join(f"`{f}`" for f in top3)}**
+
+| Rank | Feature | Mean |SHAP| |
+|------|---------|-------------|
+{shap_rows}
+
+> SHAP plots saved to `outputs/figures/shap_summary.png` and `shap_importance.png`.
+"""
+    else:
+        shap_section = "\n## SHAP Feature Importance\n\nSHAP analysis failed or was skipped — see `outputs/logs/shap_error.txt`.\n"
+
     return f"""# GBM Training Summary
 
 ## Dataset
@@ -796,7 +846,7 @@ def build_markdown_report(
 - AUC: `{cv_summary['auc_mean']:.4f}`
 - 95% CI: `{cv_summary['auc_ci'][0]:.4f}` to `{cv_summary['auc_ci'][1]:.4f}`
 - One-sided p-value vs 0.5: `{cv_summary['auc_p']:.6g}`
-"""
+{shap_section}"""
 
 
 def main() -> None:
@@ -930,7 +980,9 @@ def main() -> None:
         metrics_dir=paths["metrics"],
     )
     save_feature_importance(best_model, list(X_trainval.columns), paths["figures"], paths["tables"])
-    save_shap_outputs(best_model, X_test, list(X_test.columns), paths["figures"], paths["logs"])
+    shap_summary = save_shap_outputs(best_model, X_test, list(X_test.columns), paths["figures"], paths["logs"])
+    if shap_summary:
+        save_json(shap_summary, paths["metrics"] / "shap_summary.json")
 
     # Final cross-validation on full dataset
     cv_summary = final_cross_validation(
@@ -970,6 +1022,7 @@ def main() -> None:
         config={
             "optuna_trials": optuna_trials,
         },
+        shap_summary=shap_summary,
     )
     save_markdown(report, paths["reports"] / "training_summary.md")
 
@@ -997,6 +1050,8 @@ def main() -> None:
     print(f"  Final CV mean AUC: {cv_summary['auc_mean']:.4f}")
     print(f"  Final CV 95% CI: [{cv_summary['auc_ci'][0]:.4f}, {cv_summary['auc_ci'][1]:.4f}]")
     print(f"  Final CV p-value vs 0.5: {cv_summary['auc_p']:.6g}")
+    if shap_summary and shap_summary.get("top3"):
+        print(f"  Top SHAP features: {', '.join(shap_summary['top3'])}")
 
 
 if __name__ == "__main__":

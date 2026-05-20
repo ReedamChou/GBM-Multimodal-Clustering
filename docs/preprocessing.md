@@ -33,31 +33,33 @@ raw input CSV and produces its own processed output CSV — results are never mi
 
 ## CLI Usage
 
+> PowerShell note: use the backtick (`) for line continuation, or keep commands on one line.
+
 ### T1 (default)
-```bash
-python src/preprocessing.py \
-  --input  outputs/features_raw_t1.csv \
+```powershell
+python src/preprocessing.py `
+  --input outputs/features_raw_t1.csv `
   --output outputs/features_processed_t1.csv
 ```
 
 ### T2
-```bash
-python src/preprocessing.py \
-  --input  outputs/features_raw_t2.csv \
+```powershell
+python src/preprocessing.py `
+  --input outputs/features_raw_t2.csv `
   --output outputs/features_processed_t2.csv
 ```
 
 ### T1GD
-```bash
-python src/preprocessing.py \
-  --input  outputs/features_raw_t1gd.csv \
+```powershell
+python src/preprocessing.py `
+  --input outputs/features_raw_t1gd.csv `
   --output outputs/features_processed_t1gd.csv
 ```
 
 ### FLAIR
-```bash
-python src/preprocessing.py \
-  --input  outputs/features_raw_flair.csv \
+```powershell
+python src/preprocessing.py `
+  --input outputs/features_raw_flair.csv `
   --output outputs/features_processed_flair.csv
 ```
 

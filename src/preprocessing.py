@@ -23,6 +23,8 @@ FEATURE_COLS = [
       for sub in ("ed", "en", "nc")),
 ]
 
+MODALITIES = ("T1", "T2", "T1GD", "FLAIR")
+
 REQUIRED_COLS = [
     "patient_id",
     "OS_months",
@@ -70,7 +72,7 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     start_rows = len(df)
     id_col = "patient_id"
 
-    # Filter by QA flag and OS availability
+    # Filter by QC flag and required survival labels
     reliable_mask = _coerce_bool_series(df["lobe_assignment_reliable"])
     dropped_unreliable = df[~reliable_mask]
     df = df[reliable_mask].copy()
@@ -85,7 +87,7 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
     threshold = float(cfg["preprocessing"]["os_high_risk_threshold_months"])
     df["risk_label"] = (df["OS_months"] <= threshold).astype(int)
 
-    # Impute feature nulls with column medians
+    # Coerce features to numeric and impute nulls with column medians
     features = df[FEATURE_COLS].apply(pd.to_numeric, errors="coerce")
     medians = features.median()
     if medians.isna().any():
