@@ -9,9 +9,9 @@
 
 ## Runtime
 
-- Selected device: `cuda`
-- GPU available: `True`
-- Device note: `GPU training available`
+- Selected device: `cpu`
+- GPU available: `False`
+- Device note: `SVM uses CPU training`
 - Optuna trials run: `50`
 
 ## Baselines
@@ -20,22 +20,26 @@
 - Best baseline balanced accuracy: `0.6347`
 - Best baseline macro F1: `0.6356`
 
-## XGBoost
+## SVM (RBF)
 
-- Validation balanced accuracy: `0.5714`
-- Validation macro F1: `0.5716`
-- Best Optuna CV balanced accuracy: `0.6071`
-- Best params: `{'n_estimators': 249, 'learning_rate': 0.011569046886474444, 'max_depth': 8, 'subsample': 0.7347049478829597, 'colsample_bytree': 0.5496480501205234, 'min_child_weight': 5, 'gamma': 1.3170773995337703, 'reg_alpha': 3.717642135537067, 'reg_lambda': 0.0023232967562617536}`
+- Validation balanced accuracy: `0.5000`
+- Validation macro F1: `0.3019`
+- Best Optuna CV balanced accuracy: `0.5844`
+- Best params: `{'C': 541.2582843534118, 'gamma': 0.004210818577542578}`
 
 ## Final Test Metrics
 
-- Balanced accuracy: `0.6438`
-- Macro F1: `0.6146`
-- Quadratic kappa: `0.2730`
-- AUC: `0.7103`
+- Balanced accuracy: `0.5381`
+- Macro F1: `0.5375`
+- Quadratic kappa: `0.0757`
+- AUC: `0.4619`
 
 ## Final Cross-Validation
 
-- AUC: `0.6432`
-- 95% CI: `0.5441` to `0.7423`
-- One-sided p-value vs 0.5: `0.00485937`
+- AUC: `0.5584`
+- 95% CI: `0.4933` to `0.6236`
+- One-sided p-value vs 0.5: `0.0364562`
+
+## SHAP Feature Importance
+
+SHAP analysis failed or was skipped — see `outputs/logs/shap_error.txt`.

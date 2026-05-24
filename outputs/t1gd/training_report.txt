@@ -1,6 +1,6 @@
 GBM Survival Risk Stratification - Training Report
 Samples: 449
 Positives: 209  Negatives: 240
-Mean CV AUC: 0.6088
-95% CI: [0.5351, 0.6825]
-One-sided p-value vs 0.5: 0.00432496
+Mean CV AUC: 0.4875
+95% CI: [0.4442, 0.5309]
+One-sided p-value vs 0.5: 0.73418

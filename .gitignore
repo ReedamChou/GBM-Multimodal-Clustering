@@ -81,6 +81,7 @@ node_modules/
 implementation_plan.md
 New Project implimentaion Prompt.md
 report.md
+memory.md
 
 # Allow tracking pipeline outputs
 !outputs/

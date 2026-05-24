@@ -1,0 +1,17 @@
+feature
+t1_global_nc_en_ratio
+t1_global_ed_en_ratio
+t1_global_ed_total_ratio
+t1_tumor_burden_index
+t1_frontal_ed_ratio
+t1_frontal_en_ratio
+t1_frontal_nc_ratio
+t1_temporal_ed_ratio
+t1_temporal_en_ratio
+t1_temporal_nc_ratio
+t1_parietal_ed_ratio
+t1_parietal_en_ratio
+t1_parietal_nc_ratio
+t1_occipital_ed_ratio
+t1_occipital_en_ratio
+t1_occipital_nc_ratio

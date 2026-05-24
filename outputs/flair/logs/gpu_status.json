@@ -1,5 +1,5 @@
 {
-  "selected_device": "cuda",
-  "gpu_available": true,
-  "reason": "GPU training available"
+  "selected_device": "cpu",
+  "gpu_available": false,
+  "reason": "SVM uses CPU training"
 }

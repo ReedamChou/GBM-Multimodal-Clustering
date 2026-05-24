@@ -9,9 +9,9 @@
 
 ## Runtime
 
-- Selected device: `cuda`
-- GPU available: `True`
-- Device note: `GPU training available`
+- Selected device: `cpu`
+- GPU available: `False`
+- Device note: `SVM uses CPU training`
 - Optuna trials run: `50`
 
 ## Baselines
@@ -20,47 +20,26 @@
 - Best baseline balanced accuracy: `0.6285`
 - Best baseline macro F1: `0.6284`
 
-## XGBoost
+## SVM (RBF)
 
-- Validation balanced accuracy: `0.5712`
-- Validation macro F1: `0.5712`
-- Best Optuna CV balanced accuracy: `0.5868`
-- Best params: `{'n_estimators': 638, 'learning_rate': 0.07405974009235358, 'max_depth': 4, 'subsample': 0.863768631339208, 'colsample_bytree': 0.9918704573610522, 'min_child_weight': 9, 'gamma': 3.4904832000270054, 'reg_alpha': 0.00011431541785080484, 'reg_lambda': 9.315666345772176}`
+- Validation balanced accuracy: `0.5139`
+- Validation macro F1: `0.3503`
+- Best Optuna CV balanced accuracy: `0.5497`
+- Best params: `{'C': 992.6866770500909, 'gamma': 0.030403976631756376}`
 
 ## Final Test Metrics
 
-- Balanced accuracy: `0.6267`
-- Macro F1: `0.6123`
-- Quadratic kappa: `0.2483`
-- AUC: `0.6337`
+- Balanced accuracy: `0.5573`
+- Macro F1: `0.5573`
+- Quadratic kappa: `0.1146`
+- AUC: `0.4332`
 
 ## Final Cross-Validation
 
-- AUC: `0.6088`
-- 95% CI: `0.5351` to `0.6825`
-- One-sided p-value vs 0.5: `0.00432496`
+- AUC: `0.4875`
+- 95% CI: `0.4442` to `0.5309`
+- One-sided p-value vs 0.5: `0.73418`
 
-## SHAP Feature Importance (High-Risk Class)
+## SHAP Feature Importance
 
-Top 3 dominant features: **`frontal_en_ratio`, `temporal_en_ratio`, `global_nc_en_ratio`**
-
-| Rank | Feature | Mean |SHAP| |
-|------|---------|-------------|
-| 1 | `frontal_en_ratio` | 0.247184 |
-| 2 | `temporal_en_ratio` | 0.184973 |
-| 3 | `global_nc_en_ratio` | 0.142530 |
-| 4 | `frontal_ed_ratio` | 0.124135 |
-| 5 | `occipital_en_ratio` | 0.112097 |
-| 6 | `global_ed_en_ratio` | 0.105900 |
-| 7 | `frontal_nc_ratio` | 0.070239 |
-| 8 | `global_ed_total_ratio` | 0.052297 |
-| 9 | `temporal_ed_ratio` | 0.044441 |
-| 10 | `temporal_nc_ratio` | 0.040539 |
-| 11 | `parietal_en_ratio` | 0.034944 |
-| 12 | `occipital_ed_ratio` | 0.034149 |
-| 13 | `tumor_burden_index` | 0.030920 |
-| 14 | `parietal_ed_ratio` | 0.016911 |
-| 15 | `occipital_nc_ratio` | 0.010862 |
-| 16 | `parietal_nc_ratio` | 0.000000 |
-
-> SHAP plots saved to `outputs/figures/shap_summary.png` and `shap_importance.png`.
+SHAP analysis failed or was skipped — see `outputs/logs/shap_error.txt`.

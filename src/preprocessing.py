@@ -124,8 +124,11 @@ def preprocess(in_csv: Path, out_csv: Path, cfg: dict, scale: bool) -> int:
             index=features.index,
         )
 
-    # Final training table: 16 features + risk_label
-    out_df = pd.concat([features, df["risk_label"]], axis=1)
+    # Final training table: patient_id + 16 features + risk_label
+    out_df = pd.concat(
+        [df[["patient_id"]].astype(str), features, df["risk_label"]],
+        axis=1,
+    )
 
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     out_df.to_csv(out_csv, index=False)
