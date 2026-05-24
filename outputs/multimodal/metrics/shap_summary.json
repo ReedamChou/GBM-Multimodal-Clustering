@@ -2,328 +2,328 @@
   "top_features": [
     {
       "rank": 1,
-      "feature": "t1_occipital_en_ratio",
-      "mean_abs_shap": 0.005662
+      "feature": "t2_frontal_en_ratio",
+      "mean_abs_shap": 0.312866
     },
     {
       "rank": 2,
-      "feature": "flair_occipital_en_ratio",
-      "mean_abs_shap": 0.002159
+      "feature": "t1_frontal_en_ratio",
+      "mean_abs_shap": 0.292053
     },
     {
       "rank": 3,
-      "feature": "t1_temporal_nc_ratio",
-      "mean_abs_shap": 0.001754
+      "feature": "t1_parietal_ed_ratio",
+      "mean_abs_shap": 0.236139
     },
     {
       "rank": 4,
-      "feature": "t1_frontal_en_ratio",
-      "mean_abs_shap": 0.001714
+      "feature": "t2_temporal_nc_ratio",
+      "mean_abs_shap": 0.20628
     },
     {
       "rank": 5,
-      "feature": "t1gd_occipital_en_ratio",
-      "mean_abs_shap": 0.001637
+      "feature": "t1_frontal_nc_ratio",
+      "mean_abs_shap": 0.204205
     },
     {
       "rank": 6,
-      "feature": "flair_parietal_nc_ratio",
-      "mean_abs_shap": 0.001582
+      "feature": "t1_occipital_nc_ratio",
+      "mean_abs_shap": 0.166503
     },
     {
       "rank": 7,
-      "feature": "t2_temporal_nc_ratio",
-      "mean_abs_shap": 0.001501
+      "feature": "t1_global_ed_en_ratio",
+      "mean_abs_shap": 0.165393
     },
     {
       "rank": 8,
-      "feature": "t1gd_frontal_en_ratio",
-      "mean_abs_shap": 0.001443
+      "feature": "t1_frontal_ed_ratio",
+      "mean_abs_shap": 0.158047
     },
     {
       "rank": 9,
-      "feature": "flair_frontal_en_ratio",
-      "mean_abs_shap": 0.001415
+      "feature": "t1_global_nc_en_ratio",
+      "mean_abs_shap": 0.15675
     },
     {
       "rank": 10,
-      "feature": "t2_frontal_en_ratio",
-      "mean_abs_shap": 0.001348
+      "feature": "t2_temporal_en_ratio",
+      "mean_abs_shap": 0.156232
     },
     {
       "rank": 11,
-      "feature": "t2_parietal_nc_ratio",
-      "mean_abs_shap": 0.001337
+      "feature": "t2_frontal_ed_ratio",
+      "mean_abs_shap": 0.153247
     },
     {
       "rank": 12,
-      "feature": "t1gd_global_ed_en_ratio",
-      "mean_abs_shap": 0.001231
+      "feature": "t1_temporal_ed_ratio",
+      "mean_abs_shap": 0.146156
     },
     {
       "rank": 13,
-      "feature": "flair_temporal_en_ratio",
-      "mean_abs_shap": 0.001208
+      "feature": "t1_global_ed_total_ratio",
+      "mean_abs_shap": 0.132261
     },
     {
       "rank": 14,
-      "feature": "t1gd_parietal_nc_ratio",
-      "mean_abs_shap": 0.001179
+      "feature": "t2_temporal_ed_ratio",
+      "mean_abs_shap": 0.130935
     },
     {
       "rank": 15,
-      "feature": "t1_global_ed_en_ratio",
-      "mean_abs_shap": 0.001175
+      "feature": "t2_occipital_ed_ratio",
+      "mean_abs_shap": 0.130097
     },
     {
       "rank": 16,
-      "feature": "t2_global_ed_en_ratio",
-      "mean_abs_shap": 0.001168
+      "feature": "t1gd_temporal_en_ratio",
+      "mean_abs_shap": 0.126441
     },
     {
       "rank": 17,
-      "feature": "flair_temporal_nc_ratio",
-      "mean_abs_shap": 0.001136
+      "feature": "t1_temporal_nc_ratio",
+      "mean_abs_shap": 0.122118
     },
     {
       "rank": 18,
-      "feature": "t1gd_temporal_nc_ratio",
-      "mean_abs_shap": 0.001034
+      "feature": "t1gd_frontal_en_ratio",
+      "mean_abs_shap": 0.119906
     },
     {
       "rank": 19,
-      "feature": "t1_parietal_nc_ratio",
-      "mean_abs_shap": 0.001032
+      "feature": "t1_parietal_en_ratio",
+      "mean_abs_shap": 0.119474
     },
     {
       "rank": 20,
-      "feature": "t1gd_temporal_en_ratio",
-      "mean_abs_shap": 0.001005
+      "feature": "t1gd_temporal_ed_ratio",
+      "mean_abs_shap": 0.114222
     },
     {
       "rank": 21,
-      "feature": "t2_occipital_en_ratio",
-      "mean_abs_shap": 0.000887
+      "feature": "t2_global_ed_total_ratio",
+      "mean_abs_shap": 0.110629
     },
     {
       "rank": 22,
-      "feature": "flair_global_ed_en_ratio",
-      "mean_abs_shap": 0.000886
+      "feature": "t1_tumor_burden_index",
+      "mean_abs_shap": 0.106158
     },
     {
       "rank": 23,
-      "feature": "t1gd_parietal_en_ratio",
-      "mean_abs_shap": 0.000869
+      "feature": "t2_parietal_en_ratio",
+      "mean_abs_shap": 0.10318
     },
     {
       "rank": 24,
-      "feature": "flair_frontal_nc_ratio",
-      "mean_abs_shap": 0.000835
+      "feature": "t1_occipital_ed_ratio",
+      "mean_abs_shap": 0.101585
     },
     {
       "rank": 25,
-      "feature": "t2_frontal_nc_ratio",
-      "mean_abs_shap": 0.000802
+      "feature": "t2_parietal_ed_ratio",
+      "mean_abs_shap": 0.099563
     },
     {
       "rank": 26,
-      "feature": "t1gd_frontal_nc_ratio",
-      "mean_abs_shap": 0.000789
+      "feature": "t1_temporal_en_ratio",
+      "mean_abs_shap": 0.09694
     },
     {
       "rank": 27,
-      "feature": "t1_temporal_en_ratio",
-      "mean_abs_shap": 0.000618
+      "feature": "t1gd_global_nc_en_ratio",
+      "mean_abs_shap": 0.092423
     },
     {
       "rank": 28,
-      "feature": "flair_occipital_ed_ratio",
-      "mean_abs_shap": 0.000594
+      "feature": "t2_global_ed_en_ratio",
+      "mean_abs_shap": 0.090493
     },
     {
       "rank": 29,
-      "feature": "t2_temporal_en_ratio",
-      "mean_abs_shap": 0.00057
+      "feature": "t1gd_occipital_ed_ratio",
+      "mean_abs_shap": 0.089501
     },
     {
       "rank": 30,
-      "feature": "t1_frontal_nc_ratio",
-      "mean_abs_shap": 0.000543
+      "feature": "t1gd_parietal_en_ratio",
+      "mean_abs_shap": 0.086161
     },
     {
       "rank": 31,
-      "feature": "t1gd_global_ed_total_ratio",
-      "mean_abs_shap": 0.000474
+      "feature": "t1_parietal_nc_ratio",
+      "mean_abs_shap": 0.081
     },
     {
       "rank": 32,
       "feature": "t2_tumor_burden_index",
-      "mean_abs_shap": 0.00045
+      "mean_abs_shap": 0.079175
     },
     {
       "rank": 33,
-      "feature": "t1_parietal_en_ratio",
-      "mean_abs_shap": 0.000445
+      "feature": "flair_global_ed_en_ratio",
+      "mean_abs_shap": 0.075567
     },
     {
       "rank": 34,
-      "feature": "t1gd_parietal_ed_ratio",
-      "mean_abs_shap": 0.000417
+      "feature": "t1gd_tumor_burden_index",
+      "mean_abs_shap": 0.073582
     },
     {
       "rank": 35,
-      "feature": "t1gd_occipital_ed_ratio",
-      "mean_abs_shap": 0.000411
+      "feature": "flair_occipital_en_ratio",
+      "mean_abs_shap": 0.071709
     },
     {
       "rank": 36,
-      "feature": "t2_global_ed_total_ratio",
-      "mean_abs_shap": 0.000381
+      "feature": "t2_global_nc_en_ratio",
+      "mean_abs_shap": 0.070647
     },
     {
       "rank": 37,
-      "feature": "t1_occipital_ed_ratio",
-      "mean_abs_shap": 0.000368
+      "feature": "t1gd_frontal_nc_ratio",
+      "mean_abs_shap": 0.069688
     },
     {
       "rank": 38,
-      "feature": "flair_global_nc_en_ratio",
-      "mean_abs_shap": 0.000353
+      "feature": "t2_frontal_nc_ratio",
+      "mean_abs_shap": 0.067738
     },
     {
       "rank": 39,
-      "feature": "t2_occipital_ed_ratio",
-      "mean_abs_shap": 0.000328
+      "feature": "flair_temporal_nc_ratio",
+      "mean_abs_shap": 0.067156
     },
     {
       "rank": 40,
-      "feature": "t1_tumor_burden_index",
-      "mean_abs_shap": 0.000326
+      "feature": "t1gd_parietal_ed_ratio",
+      "mean_abs_shap": 0.063679
     },
     {
       "rank": 41,
-      "feature": "t1_frontal_ed_ratio",
-      "mean_abs_shap": 0.000319
+      "feature": "t2_occipital_nc_ratio",
+      "mean_abs_shap": 0.058105
     },
     {
       "rank": 42,
-      "feature": "t1_global_nc_en_ratio",
-      "mean_abs_shap": 0.000301
+      "feature": "t2_parietal_nc_ratio",
+      "mean_abs_shap": 0.056953
     },
     {
       "rank": 43,
-      "feature": "t2_parietal_en_ratio",
-      "mean_abs_shap": 0.0003
+      "feature": "t1_occipital_en_ratio",
+      "mean_abs_shap": 0.054845
     },
     {
       "rank": 44,
-      "feature": "flair_occipital_nc_ratio",
-      "mean_abs_shap": 0.000295
+      "feature": "flair_parietal_ed_ratio",
+      "mean_abs_shap": 0.053648
     },
     {
       "rank": 45,
-      "feature": "t2_global_nc_en_ratio",
-      "mean_abs_shap": 0.000293
+      "feature": "flair_frontal_en_ratio",
+      "mean_abs_shap": 0.05174
     },
     {
       "rank": 46,
-      "feature": "t1_global_ed_total_ratio",
-      "mean_abs_shap": 0.00029
+      "feature": "t1gd_global_ed_total_ratio",
+      "mean_abs_shap": 0.04544
     },
     {
       "rank": 47,
-      "feature": "flair_global_ed_total_ratio",
-      "mean_abs_shap": 0.000233
+      "feature": "flair_frontal_nc_ratio",
+      "mean_abs_shap": 0.041182
     },
     {
       "rank": 48,
-      "feature": "t1_temporal_ed_ratio",
-      "mean_abs_shap": 0.000207
+      "feature": "flair_frontal_ed_ratio",
+      "mean_abs_shap": 0.040107
     },
     {
       "rank": 49,
-      "feature": "t1gd_tumor_burden_index",
-      "mean_abs_shap": 0.000194
+      "feature": "flair_tumor_burden_index",
+      "mean_abs_shap": 0.039857
     },
     {
       "rank": 50,
-      "feature": "t2_parietal_ed_ratio",
-      "mean_abs_shap": 0.000191
+      "feature": "flair_temporal_en_ratio",
+      "mean_abs_shap": 0.033578
     },
     {
       "rank": 51,
-      "feature": "flair_frontal_ed_ratio",
-      "mean_abs_shap": 0.00018
+      "feature": "t1gd_frontal_ed_ratio",
+      "mean_abs_shap": 0.032112
     },
     {
       "rank": 52,
-      "feature": "t1_parietal_ed_ratio",
-      "mean_abs_shap": 0.000178
+      "feature": "t1gd_temporal_nc_ratio",
+      "mean_abs_shap": 0.032111
     },
     {
       "rank": 53,
-      "feature": "t1_occipital_nc_ratio",
-      "mean_abs_shap": 0.000158
+      "feature": "t1gd_occipital_nc_ratio",
+      "mean_abs_shap": 0.030436
     },
     {
       "rank": 54,
-      "feature": "flair_parietal_en_ratio",
-      "mean_abs_shap": 0.000142
+      "feature": "flair_temporal_ed_ratio",
+      "mean_abs_shap": 0.02824
     },
     {
       "rank": 55,
-      "feature": "t2_temporal_ed_ratio",
-      "mean_abs_shap": 0.000133
+      "feature": "t2_occipital_en_ratio",
+      "mean_abs_shap": 0.025612
     },
     {
       "rank": 56,
-      "feature": "t2_frontal_ed_ratio",
-      "mean_abs_shap": 0.000118
+      "feature": "t1gd_parietal_nc_ratio",
+      "mean_abs_shap": 0.024675
     },
     {
       "rank": 57,
-      "feature": "t2_occipital_nc_ratio",
-      "mean_abs_shap": 8.8e-05
+      "feature": "flair_global_ed_total_ratio",
+      "mean_abs_shap": 0.014929
     },
     {
       "rank": 58,
-      "feature": "flair_temporal_ed_ratio",
-      "mean_abs_shap": 8e-05
+      "feature": "flair_global_nc_en_ratio",
+      "mean_abs_shap": 0.004988
     },
     {
       "rank": 59,
-      "feature": "flair_tumor_burden_index",
-      "mean_abs_shap": 7.8e-05
+      "feature": "t1gd_global_ed_en_ratio",
+      "mean_abs_shap": 0.0
     },
     {
       "rank": 60,
-      "feature": "t1gd_global_nc_en_ratio",
-      "mean_abs_shap": 7.8e-05
+      "feature": "t1gd_occipital_en_ratio",
+      "mean_abs_shap": 0.0
     },
     {
       "rank": 61,
-      "feature": "t1gd_frontal_ed_ratio",
-      "mean_abs_shap": 7.5e-05
+      "feature": "flair_parietal_en_ratio",
+      "mean_abs_shap": 0.0
     },
     {
       "rank": 62,
-      "feature": "t1gd_temporal_ed_ratio",
-      "mean_abs_shap": 7.1e-05
+      "feature": "flair_parietal_nc_ratio",
+      "mean_abs_shap": 0.0
     },
     {
       "rank": 63,
-      "feature": "t1gd_occipital_nc_ratio",
-      "mean_abs_shap": 3.8e-05
+      "feature": "flair_occipital_ed_ratio",
+      "mean_abs_shap": 0.0
     },
     {
       "rank": 64,
-      "feature": "flair_parietal_ed_ratio",
-      "mean_abs_shap": 6e-06
+      "feature": "flair_occipital_nc_ratio",
+      "mean_abs_shap": 0.0
     }
   ],
   "top3": [
-    "t1_occipital_en_ratio",
-    "flair_occipital_en_ratio",
-    "t1_temporal_nc_ratio"
+    "t2_frontal_en_ratio",
+    "t1_frontal_en_ratio",
+    "t1_parietal_ed_ratio"
   ]
 }
